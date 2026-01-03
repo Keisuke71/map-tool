@@ -38,28 +38,7 @@
             color: #2c3e50;
         }
 
-        h3 {
-            margin-top: 20px;
-            color: #2980b9;
-        }
-
-        ol {
-            padding-left: 20px;
-        }
-
-        li {
-            margin-bottom: 10px;
-        }
-
-        code {
-            background: #f0f0f0;
-            padding: 2px 5px;
-            border-radius: 3px;
-            font-family: monospace;
-            color: #c7254e;
-        }
-
-        /* 注意書き用のスタイル */
+        /* 警告・注意書き */
         .alert-box {
             background: #fff5f5;
             border: 1px solid #feb2b2;
@@ -75,6 +54,16 @@
             display: block;
             margin-bottom: 10px;
             font-size: 1.1em;
+        }
+
+        .profile-note {
+            background: #e3f2fd;
+            border: 1px solid #bbdefb;
+            border-left: 5px solid #2196f3;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 15px 0;
+            color: #0d47a1;
         }
 
         .note {
@@ -134,30 +123,22 @@
 
         <div class="alert-box">
             <span class="alert-title">⚠️ APIキー作成前にお読みください</span>
-            <p>GoogleのAPIキーを取得する際、<strong>会社のアカウント</strong>か<strong>個人用アカウント</strong>か迷う場合があります。以下の点にご注意ください。</p>
-
-            <table>
-                <tr>
-                    <th>項目</th>
-                    <th>個人用アカウント (@gmail.com)</th>
-                    <th>会社アカウント (@会社名.net)</th>
-                </tr>
-                <tr>
-                    <td><strong>支払い登録</strong></td>
-                    <td>ご自身のカード登録が必要</td>
-                    <td>会社の管理設定に依存します</td>
-                </tr>
-                <tr>
-                    <td><strong>利用制限</strong></td>
-                    <td>制限なく作成可能</td>
-                    <td>IT部門により禁止されている場合があります</td>
-                </tr>
-            </table>
+            <p>Google
+                APIキーは<strong>無料枠内でもクレジットカード等の支払い情報の登録が必須</strong>です。会社用アカウントで行うと、支払い情報の紐付けや権限エラー等でトラブルになる可能性があります。</p>
 
             <p><strong>【推奨】</strong><br>
-                2〜3名での小規模な利用で、会社側でGoogle
-                Cloudの設定が済んでいない場合は、<strong>個人用のGoogleアカウント</strong>での作成が最もスムーズです。月間200ドル（約3万円）分の無料枠があるため、通常の業務利用であれば料金が発生することはありませんが、<strong>無料枠内であってもクレジットカード等の登録は必須</strong>となります。
-            </p>
+                2〜3名での小規模利用の場合は、ご自身の<strong>「個人用Googleアカウント (@gmail.com)」</strong>での作成が最もスムーズです。</p>
+        </div>
+
+        <div class="profile-note">
+            <strong>💡 Chromeをご利用の方へ</strong><br>
+            普段「会社のメールアドレス」でChromeにログインしている場合は、以下の手順で<strong>個人のプロファイル</strong>に切り替えてから作業を開始してください。
+            <ol style="margin-top: 10px; padding-left: 20px;">
+                <li>Chrome右上の<strong>プロフィールアイコン</strong>をクリック</li>
+                <li>「他のプロファイル」から<strong>個人用のアカウント</strong>を選択するか、「ゲスト」または「追加」を選んで新しいウィンドウを開く</li>
+                <li>その新しいウィンドウで Google Cloud Console にアクセスする</li>
+            </ol>
+            ※これにより、誤って会社のビジネスアカウントに個人のカード情報を登録してしまう事故を防げます。
         </div>
 
         <hr>
@@ -175,11 +156,10 @@
                 </ul>
             </li>
             <li>「APIとサービス」＞「認証情報」を開き、<strong>「＋ 認証情報を作成」＞「APIキー」</strong>をクリックします。</li>
-            <li>表示されたAPIキーをコピーしてください。</li>
         </ol>
 
         <div class="note">
-            <strong>💡 安全のための設定</strong><br>
+            <strong>💡 安全のための設定（重要）</strong><br>
             「APIとサービス」＞「割り当て」から、各APIの「1日あたりのリクエスト数」を <code>1000</code> 程度に制限しておくと、万が一の際も課金が発生せず安心です。
         </div>
 
@@ -190,7 +170,6 @@
             <li>入力欄に、コピーしたAPIキーを貼り付けます。</li>
             <li><strong>「利用開始」</strong>ボタンを押してください。</li>
         </ol>
-        <p>※ キーはブラウザに保存されるため、次回から入力は不要です。</p>
 
         <div class="back-link">
             <a href="javascript:window.close();" class="btn">この画面を閉じる</a>
