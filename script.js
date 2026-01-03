@@ -1,14 +1,25 @@
 /* =========================================
    APIキー管理と初期化処理
    ========================================= */
-let apiKey = localStorage.getItem("googleMapsApiKey"); // 保存されたキーを読み込む
+let apiKey = localStorage.getItem("googleMapsApiKey");
 let map, marker, circle, boundsRect, geocoder;
 let currentRadius = 300;
 
+// ★設定: 回数制限の目安
+const QUOTA_LIMITS = {
+    DAILY: 300,      // 1日の目安
+    MONTHLY: 10000   // 1ヶ月の目安
+};
+
 // ページ読み込み時に実行
 document.addEventListener("DOMContentLoaded", () => {
+    // 画面表示を初期化
+    QuotaManager.updateDisplay();
+
     if (apiKey) {
         // キーがあれば地図APIを読み込む
+        // ★ここで「地図表示」分のカウントを行う
+        QuotaManager.increment();
         loadGoogleMapsScript(apiKey);
     } else {
         // キーがなければ入力画面を表示
@@ -16,20 +27,82 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 });
 
+/* =========================================
+   ★回数管理クラス (新規追加)
+   ========================================= */
+const QuotaManager = {
+    storageKey: "googleMapsUsageStats",
+
+    // データを取得・リセット判定
+    getData: function () {
+        const now = new Date();
+        const todayStr = now.toISOString().slice(0, 10); // "2026-01-04"
+        const monthStr = now.toISOString().slice(0, 7);  // "2026-01"
+
+        let data = JSON.parse(localStorage.getItem(this.storageKey)) || {
+            date: todayStr,
+            month: monthStr,
+            dailyCount: 0,
+            monthlyCount: 0
+        };
+
+        // 日替わりリセット
+        if (data.date !== todayStr) {
+            data.date = todayStr;
+            data.dailyCount = 0;
+        }
+        // 月替わりリセット
+        if (data.month !== monthStr) {
+            data.month = monthStr;
+            data.monthlyCount = 0;
+        }
+
+        return data;
+    },
+
+    // カウントアップして保存
+    increment: function () {
+        const data = this.getData();
+        data.dailyCount++;
+        data.monthlyCount++;
+        localStorage.setItem(this.storageKey, JSON.stringify(data));
+        this.updateDisplay();
+    },
+
+    // 画面表示の更新
+    updateDisplay: function () {
+        const el = document.getElementById("quota-display");
+        if (!el) return;
+
+        const data = this.getData();
+        const dailyLeft = QUOTA_LIMITS.DAILY - data.dailyCount;
+        const monthlyLeft = QUOTA_LIMITS.MONTHLY - data.monthlyCount;
+
+        // 0未満にならないように調整
+        const dShow = dailyLeft < 0 ? 0 : dailyLeft;
+        const mShow = monthlyLeft < 0 ? 0 : monthlyLeft;
+
+        el.innerHTML = `
+            本日残り: <b>${dShow}</b> / ${QUOTA_LIMITS.DAILY}<br>
+            今月残り: <b>${mShow}</b> / ${QUOTA_LIMITS.MONTHLY}
+        `;
+    }
+};
+
 // 入力されたAPIキーを保存してリロード
 function saveApiKey() {
     const inputKey = document.getElementById("api-key-input").value.trim();
     if (inputKey) {
         localStorage.setItem("googleMapsApiKey", inputKey);
-        location.reload(); // 再読み込みして反映
+        location.reload();
     } else {
         alert("APIキーを入力してください");
     }
 }
 
-// APIキーを削除する（設定メニュー用）
+// APIキーを削除する
 function resetApiKey() {
-    if(confirm("保存されたAPIキーを削除しますか？\n次回利用時に入力が求められます。")) {
+    if (confirm("保存されたAPIキーを削除しますか？\n次回利用時に入力が求められます。")) {
         localStorage.removeItem("googleMapsApiKey");
         location.reload();
     }
@@ -70,10 +143,8 @@ window.initMap = function () {
         });
     }
 
-    // 初回の参照用地図を表示（初期位置）
     updateRefMap("東京都千代田区富士見2丁目");
 
-    // メニュー外クリックで閉じる処理
     document.addEventListener('click', function (event) {
         const menu = document.getElementById("settings-menu");
         const btn = document.getElementById("settings-btn");
@@ -120,7 +191,7 @@ function setRadius(radius) {
     currentRadius = radius;
     document.querySelectorAll('.radius-btn').forEach(btn => btn.classList.remove('active'));
     if (event && event.target) event.target.classList.add('active');
-    
+
     const impBtn = document.getElementById('impossible-btn');
     if (impBtn) impBtn.classList.remove('active');
 
@@ -154,6 +225,9 @@ function geocodeAddress() {
     const address = document.getElementById("address-input").value;
     if (!address || !geocoder) return;
 
+    // ★ここで検索実行分のカウントを行う
+    QuotaManager.increment();
+
     geocoder.geocode({ 'address': address }, (results, status) => {
         if (status === 'OK') {
             const result = results[0];
@@ -175,11 +249,10 @@ function geocodeAddress() {
     });
 }
 
-// 右側の参照用マップを更新（保存されたapiKeyを使用）
 function updateRefMap(query) {
     const frame = document.getElementById("ref-frame");
-    // apiKey変数はローカルストレージから読み込まれているため、そのまま使えます
     if (frame && apiKey) {
+        // ※ Embed APIは無料なのでカウントしていませんが、必要ならここでも QuotaManager.increment() を呼べます
         const embedUrl = `https://www.google.com/maps/embed/v1/place?key=${apiKey}&q=${encodeURIComponent(query)}`;
         frame.src = embedUrl;
     }

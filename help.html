@@ -159,8 +159,16 @@
         </ol>
 
         <div class="note">
-            <strong>💡 安全のための設定（重要）</strong><br>
-            「APIとサービス」＞「割り当て」から、各APIの「1日あたりのリクエスト数」を <code>1000</code> 程度に制限しておくと、万が一の際も課金が発生せず安心です。
+            <strong>💡 課金防止の重要設定（必ず行ってください）</strong><br>
+            高額請求を防ぐため、以下の手順で制限値を設定することを強く推奨します。<br>
+            <ol style="margin-top: 10px; padding-left: 20px;">
+                <li>メニューの<strong>「IAMと管理」＞「割り当てとシステム上限」</strong>を開きます。</li>
+                <li>一覧からサービス<strong>「Geocoding API」</strong>と名前<strong>「v3 requests per
+                        day」</strong>の列の一番右にある3点の部分をクリックします。</li>
+                <li><strong>「割り当てを編集」</strong>をクリックします。</li>
+                <li>Unlimitedのチェックを外し、数値を <strong>300</strong> に変更して保存します。</li>
+                <li>同様に一覧に戻り<strong>「Maps JavaScript API」</strong>もクリックして開き、<strong>30</strong> に設定してください。</li>
+            </ol>
         </div>
 
         <h2>手順2：ツールに設定する</h2>

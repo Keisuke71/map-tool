@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <title>座標取得ツール</title>
     <style>
-        /* --- 既存のCSS --- */
+        /* --- 基本レイアウト --- */
         body {
             margin: 0;
             padding: 0;
@@ -15,6 +15,7 @@
             flex-direction: column;
         }
 
+        /* 操作バー */
         #controls {
             padding: 10px 20px;
             background: #2c3e50;
@@ -61,6 +62,7 @@
             background: #2980b9;
         }
 
+        /* 半径ボタン */
         .radius-group {
             display: flex;
             gap: 5px;
@@ -90,12 +92,10 @@
             box-shadow: 0 0 5px rgba(255, 255, 255, 0.5);
         }
 
+        /* 設定メニュー */
         .settings-container {
             margin-left: auto;
             position: relative;
-            display: flex;
-            align-items: center;
-            gap: 15px;
         }
 
         #settings-btn {
@@ -141,6 +141,7 @@
             color: #007bff;
         }
 
+        /* メインエリア */
         #main-container {
             display: flex;
             flex: 1;
@@ -205,6 +206,7 @@
             color: #333;
         }
 
+        /* 結果エリア */
         #result-area {
             height: 60px;
             background: #f8f9fa;
@@ -232,26 +234,94 @@
             width: 100px;
         }
 
-        /* --- 新規追加: 残り回数表示用 --- */
-        #quota-display {
-            background: rgba(0, 0, 0, 0.3);
-            padding: 5px 10px;
+        /* --- APIキー入力モーダル --- */
+        #api-key-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 9999;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            width: 450px;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal-content h2 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+
+        .modal-content p {
+            color: #555;
+            line-height: 1.5;
+            text-align: left;
+            margin-bottom: 20px;
+        }
+
+        #api-key-input {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 20px;
+            box-sizing: border-box;
+            font-size: 16px;
+            border: 2px solid #ddd;
             border-radius: 4px;
-            font-size: 14px;
+        }
+
+        #save-key-btn {
+            width: 100%;
+            background: #27ae60;
+            color: white;
+            padding: 12px;
+            font-size: 16px;
+            border: none;
+            cursor: pointer;
             font-weight: bold;
-            color: #f1c40f;
-            /* 黄色で強調 */
-            border: 1px solid #f1c40f;
+            border-radius: 4px;
+        }
+
+        #save-key-btn:hover {
+            background: #219150;
+        }
+
+        .error-msg {
+            color: #e74c3c;
+            font-size: 14px;
+            margin-top: 10px;
+            display: none;
         }
     </style>
 </head>
 
 <body>
+    <div id="api-key-modal" style="display: none;">
+        <div class="modal-content">
+            <h2>初期設定</h2>
+            <p>
+                ツールを利用するには Google Maps APIキーが必要です。<br>
+                詳細な設定方法は<a href="help.html" target="_blank"
+                    style="color:#3498db; font-weight:bold; text-decoration:underline;">こちら</a>をご覧ください。
+            </p>
+            <input type="text" id="api-key-input" placeholder="APIキーを入力してください">
+            <button id="save-key-btn" onclick="saveApiKey()">利用開始</button>
+        </div>
+    </div>
+
     <div id="controls">
         <div class="input-group">
             <span style="font-size:20px;">🗺️</span>
             <input type="text" id="address-input" placeholder="住所を入力してください">
-
             <button id="search-btn">検索</button>
         </div>
 
@@ -264,12 +334,14 @@
             <button id="impossible-btn" class="radius-btn" onclick="setImpossible()">不可</button>
         </div>
 
-        <div class="settings-container">
-            <div id="quota-display">読み込み中...</div>
+        <div id="quota-display" style="font-size:12px; color:#ddd; margin-right:15px; text-align:right;">
+        </div>
 
+        <div class="settings-container">
             <button id="settings-btn" onclick="toggleSettings()" title="設定">⚙️</button>
             <div id="settings-menu" class="dropdown-menu">
                 <div class="menu-item" onclick="toggleLayout()">🔄 配置を切り替える</div>
+                <div class="menu-item" onclick="deleteApiKey()" style="color: #c0392b;">🗑️ APIキーを削除する</div>
                 <a href="https://github.com/Keisuke71" target="_blank" class="menu-item">👨‍💻 Developed by
                     k4.matsumoto</a>
             </div>
@@ -283,7 +355,7 @@
         </div>
         <div id="ref-area">
             <div class="area-label">👉 参照用 (境界線確認)</div>
-            <iframe id="ref-frame" src="about:blank" loading="lazy"></iframe>
+            <iframe id="ref-frame" src="about:blank"></iframe>
         </div>
     </div>
 
@@ -293,47 +365,92 @@
         <button id="copy-btn" onclick="copyToClipboard()">コピー</button>
     </div>
 
-    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&libraries=places"></script>
-
     <script src="script.js"></script>
 
-    <script type="module">
-        import { initUsageLimit, checkAndConsumeQuota } from './usageLimit.js';
+    <script>
+        // 設定: ローカルストレージの保存キー名
+        const STORAGE_KEY = 'user_google_maps_api_key';
 
-        // 画面読み込み時に初期化
+        // 1. ページ読み込み時の処理
         window.addEventListener('load', () => {
-            const displayBox = document.getElementById('quota-display');
-            initUsageLimit(displayBox);
+            const savedKey = localStorage.getItem(STORAGE_KEY);
+
+            if (savedKey) {
+                // キーがあれば、Google Maps APIを読み込む
+                loadGoogleMaps(savedKey);
+            } else {
+                // キーがなければ、入力モーダルを表示
+                document.getElementById('api-key-modal').style.display = 'flex';
+            }
         });
 
-        // 検索実行のラッパー関数
-        async function handleSearch() {
-            const addressInput = document.getElementById('address-input');
-            if (!addressInput.value) return;
+        // 2. Google Maps APIを動的にロードする関数
+        function loadGoogleMaps(apiKey) {
+            // すでに読み込まれていれば何もしない
+            if (window.google && window.google.maps) return;
 
-            // ★ここでFirebaseに問い合わせ！
-            const canUse = await checkAndConsumeQuota();
+            const script = document.createElement('script');
+            // callback=initMap で、読み込み完了後に script.js 内の initMap を呼ぶ
+            script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&callback=initMap`;
+            script.async = true;
+            script.defer = true;
 
-            if (canUse) {
-                // 許可が出たら、script.js にある(はずの)地図検索関数を実行
-                // ※script.js側に geocodeAddress() が定義されている前提です
-                if (typeof geocodeAddress === 'function') {
-                    geocodeAddress();
-                } else {
-                    alert('エラー: 地図機能(script.js)が読み込まれていません');
-                }
-            }
+            // エラーハンドリング（キーが無効な場合など）
+            script.onerror = () => {
+                alert("Google Maps APIの読み込みに失敗しました。\nキーが正しいか確認してください。");
+                deleteApiKey(); // 無効なキーかもしれないので削除
+            };
+
+            document.head.appendChild(script);
         }
 
-        // ボタンクリックイベントの設定
-        document.getElementById('search-btn').addEventListener('click', handleSearch);
+        // 3. キー保存ボタンの処理
+        document.getElementById('save-key-btn').addEventListener('click', () => {
+            const input = document.getElementById('api-key-input');
+            const errorMsg = document.getElementById('error-msg');
+            const key = input.value.trim();
 
-        // Enterキーでも検索できるように設定
-        document.getElementById('address-input').addEventListener('keydown', (event) => {
-            if (event.key === 'Enter') {
-                handleSearch();
+            if (!key) {
+                errorMsg.style.display = 'block';
+                return;
             }
+
+            // 保存してリロード
+            localStorage.setItem(STORAGE_KEY, key);
+            location.reload();
         });
+
+        // 4. キー削除処理（設定メニューから）
+        window.deleteApiKey = function () {
+            if (confirm("保存されたAPIキーを削除しますか？\n次回利用時に再入力が必要になります。")) {
+                localStorage.removeItem(STORAGE_KEY);
+                location.reload();
+            }
+        };
+
+        // UI操作用
+        window.toggleSettings = () => {
+            document.getElementById('settings-menu').classList.toggle('show');
+        };
+
+        // 検索ボタンとEnterキーの連携
+        const runSearch = () => {
+            const address = document.getElementById('address-input').value;
+            // script.js に geocodeAddress がある前提
+            if (address && typeof geocodeAddress === 'function') {
+                geocodeAddress();
+            }
+        };
+
+        document.getElementById('search-btn').addEventListener('click', runSearch);
+        document.getElementById('address-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') runSearch();
+        });
+
+        // script.js の initMap がグローバルにない場合の安全策
+        if (typeof window.initMap === 'undefined') {
+            window.initMap = () => { console.log("Map Loaded"); };
+        }
     </script>
 </body>
 
