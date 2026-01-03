@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>設定方法・ヘルプ - 座標取得ツール</title>
+    <style>
+        body {
+            font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            margin: 0;
+            padding: 0;
+            background: #f4f6f8;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 40px auto;
+            background: #fff;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            border-bottom: 2px solid #2c3e50;
+            padding-bottom: 10px;
+            color: #2c3e50;
+        }
+
+        h2 {
+            background: #eef2f5;
+            padding: 10px 15px;
+            border-left: 5px solid #3498db;
+            margin-top: 30px;
+            color: #2c3e50;
+        }
+
+        h3 {
+            margin-top: 20px;
+            color: #2980b9;
+        }
+
+        ol {
+            padding-left: 20px;
+        }
+
+        li {
+            margin-bottom: 10px;
+        }
+
+        code {
+            background: #f0f0f0;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: monospace;
+            color: #c7254e;
+        }
+
+        .note {
+            background: #fff3cd;
+            color: #856404;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 15px 0;
+            border: 1px solid #ffeeba;
+        }
+
+        .btn {
+            display: inline-block;
+            background: #3498db;
+            color: #fff;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 4px;
+            margin-top: 20px;
+        }
+
+        .btn:hover {
+            background: #2980b9;
+        }
+
+        .back-link {
+            display: block;
+            margin-top: 40px;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <h1>📍 座標取得ツール ヘルプ</h1>
+        <p>このツールを利用するために必要な「Google Maps APIキー」の取得方法と設定手順を解説します。</p>
+
+        <h2>手順1：APIキーを取得する</h2>
+        <p>Googleの地図サービスを利用するための「鍵」を取得します。以下の手順で行ってください。</p>
+        <ol>
+            <li><a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a> にアクセスします。</li>
+            <li>画面上部のプロジェクト選択部分から<strong>「新しいプロジェクト」</strong>を作成します（名前は「Map-Tool」など自由です）。</li>
+            <li>メニューの「APIとサービス」＞「ライブラリ」を開き、以下の3つを検索して<strong>【有効】</strong>にしてください。
+                <ul>
+                    <li><strong>Maps JavaScript API</strong></li>
+                    <li><strong>Geocoding API</strong></li>
+                    <li><strong>Maps Embed API</strong></li>
+                </ul>
+            </li>
+            <li>「APIとサービス」＞「認証情報」を開き、<strong>「＋ 認証情報を作成」＞「APIキー」</strong>をクリックします。</li>
+            <li>表示された長い文字列（APIキー）をコピーしてください。</li>
+        </ol>
+
+        <div class="note">
+            <strong>💡 重要：課金を防ぐ設定（推奨）</strong><br>
+            「APIとサービス」＞「割り当て」から、Geocoding API等の「1日あたりのリクエスト数」を <code>1000</code> に設定することをお勧めします。これで無料枠を超える心配がなくなります。
+        </div>
+
+        <h2>手順2：ツールに設定する</h2>
+        <p>取得したキーをツールに入力します。</p>
+        <ol>
+            <li>ツールの初期設定画面に戻ります。</li>
+            <li>入力欄に、手順1でコピーしたAPIキーを貼り付けます。</li>
+            <li><strong>「利用開始」</strong>ボタンを押してください。</li>
+        </ol>
+        <p>※ 入力したキーはブラウザに保存されるため、次回からは入力不要です。</p>
+
+        <h2>困ったときは</h2>
+        <h3>Q. 「エラーが発生しました」と出る</h3>
+        <p>APIキーが間違っているか、Google Cloud側で「請求先アカウント」の設定が完了していない可能性があります。Google Cloud Consoleを確認してください。</p>
+
+        <h3>Q. キーを間違えて登録してしまった</h3>
+        <p>ツールの画面右上にある歯車アイコン（⚙️）をクリックし、<strong>「🔑 APIキーを削除する」</strong>を選択すると、再入力できるようになります。</p>
+
+        <div class="back-link">
+            <a href="javascript:window.close();" class="btn">この画面を閉じる</a>
+        </div>
+    </div>
+
+</body>
+
+</html>

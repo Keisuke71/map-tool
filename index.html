@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <title>座標取得ツール</title>
+    <style>
+        /* 基本レイアウト */
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* 上部操作バー */
+        #controls {
+            padding: 10px 20px;
+            background: #2c3e50;
+            color: white;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            height: 60px;
+            box-sizing: border-box;
+            position: relative;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        input[type="text"] {
+            padding: 8px;
+            font-size: 16px;
+            border-radius: 4px;
+            border: none;
+        }
+
+        #address-input {
+            width: 250px;
+        }
+
+        button {
+            padding: 8px 12px;
+            cursor: pointer;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: bold;
+            white-space: nowrap;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #2980b9;
+        }
+
+        .radius-group {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+            margin-left: 20px;
+        }
+
+        button.radius-btn {
+            background: #7f8c8d;
+            font-size: 12px;
+            padding: 6px 10px;
+        }
+
+        button.radius-btn.active {
+            background: #27ae60;
+            border: 1px solid #fff;
+        }
+
+        #impossible-btn {
+            background: #c0392b;
+            margin-left: 10px;
+        }
+
+        #impossible-btn.active {
+            background: #e74c3c;
+            border: 2px solid #fff;
+            box-shadow: 0 0 5px rgba(255, 255, 255, 0.5);
+        }
+
+        .settings-container {
+            margin-left: auto;
+            position: relative;
+        }
+
+        #settings-btn {
+            background: transparent;
+            font-size: 24px;
+            padding: 0 10px;
+            color: #ecf0f1;
+        }
+
+        #settings-btn:hover {
+            color: #3498db;
+        }
+
+        .dropdown-menu {
+            display: none;
+            position: absolute;
+            top: 45px;
+            right: 0;
+            background-color: white;
+            min-width: 200px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+            border-radius: 4px;
+            z-index: 1000;
+            overflow: hidden;
+        }
+
+        .dropdown-menu.show {
+            display: block;
+        }
+
+        .menu-item {
+            padding: 12px 16px;
+            text-decoration: none;
+            display: block;
+            color: #333;
+            font-size: 14px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+        }
+
+        .menu-item:hover {
+            background-color: #f1f1f1;
+            color: #007bff;
+        }
+
+        /* メインコンテナ */
+        #main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .layout-horizontal {
+            flex-direction: row;
+        }
+
+        .layout-horizontal>div {
+            width: 50%;
+            height: 100%;
+        }
+
+        .layout-horizontal #work-area {
+            border-right: 2px solid #2c3e50;
+        }
+
+        .layout-vertical {
+            flex-direction: column;
+        }
+
+        .layout-vertical>div {
+            width: 100%;
+            height: 50%;
+        }
+
+        .layout-vertical #work-area {
+            border-bottom: 2px solid #2c3e50;
+        }
+
+        #work-area,
+        #ref-area {
+            position: relative;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+
+        #ref-frame {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        .area-label {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 6px 12px;
+            z-index: 10;
+            font-weight: bold;
+            border-radius: 4px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+            pointer-events: none;
+            font-size: 13px;
+            color: #333;
+        }
+
+        #result-area {
+            height: 60px;
+            background: #f8f9fa;
+            border-top: 1px solid #ddd;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            justify-content: center;
+            padding: 0 20px;
+            box-sizing: border-box;
+        }
+
+        #output-text {
+            font-family: monospace;
+            font-size: 16px;
+            padding: 8px;
+            border: 1px solid #ccc;
+            background: #fff;
+            width: 600px;
+            max-width: 100%;
+        }
+
+        #copy-btn {
+            background: #e74c3c;
+            width: 100px;
+        }
+
+        /* APIキー入力モーダル */
+        #api-key-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 9999;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            width: 400px;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal-content h2 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+
+        .modal-content p {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 20px;
+            text-align: left;
+        }
+
+        #api-key-input {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+
+        #save-key-btn {
+            width: 100%;
+            background: #27ae60;
+            padding: 10px;
+            font-size: 16px;
+        }
+
+        #save-key-btn:hover {
+            background: #219150;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="api-key-modal" style="display: none;">
+        <div class="modal-content">
+            <h2>初期設定</h2>
+            <p>
+                ツールを利用するには Google Maps APIキーが必要です。<br>
+                詳細な設定方法は<a href="help.html" target="_blank"
+                    style="color:#3498db; font-weight:bold; text-decoration:underline;">こちら</a>をご覧ください。
+            </p>
+            <input type="text" id="api-key-input" placeholder="APIキーを入力してください">
+            <button id="save-key-btn" onclick="saveApiKey()">利用開始</button>
+        </div>
+    </div>
+
+    <div id="controls">
+        <div class="input-group">
+            <span style="font-size:20px;">🗺️</span>
+            <input type="text" id="address-input" placeholder="住所を入力してください"
+                onkeydown="if(event.key==='Enter') geocodeAddress()">
+            <button onclick="geocodeAddress()">検索</button>
+        </div>
+
+        <div class="radius-group">
+            <button class="radius-btn" onclick="setRadius(50)">50m</button>
+            <button class="radius-btn" onclick="setRadius(100)">100m</button>
+            <button class="radius-btn active" onclick="setRadius(300)">300m</button>
+            <button class="radius-btn" onclick="setRadius(500)">500m</button>
+            <button class="radius-btn" onclick="setRadius(1000)">1km</button>
+            <button id="impossible-btn" class="radius-btn" onclick="setImpossible()">不可</button>
+        </div>
+
+        <div class="settings-container">
+            <button id="settings-btn" onclick="toggleSettings()" title="設定">⚙️</button>
+            <div id="settings-menu" class="dropdown-menu">
+                <div class="menu-item" onclick="toggleLayout()">🔄 配置を切り替える</div>
+                <div class="menu-item" onclick="resetApiKey()" style="color:red;">🔑 APIキーを削除する</div>
+                <a href="https://github.com/Keisuke71" target="_blank" class="menu-item">👨‍💻 Developed by
+                    k4.matsumoto</a>
+            </div>
+        </div>
+    </div>
+
+    <div id="main-container" class="layout-horizontal">
+        <div id="work-area">
+            <div class="area-label">👈 作業用</div>
+            <div id="map"></div>
+        </div>
+        <div id="ref-area">
+            <div class="area-label">👉 参照用 (境界線確認)</div>
+            <iframe id="ref-frame" src="about:blank" loading="lazy"></iframe>
+        </div>
+    </div>
+
+    <div id="result-area">
+        <span style="font-weight:bold;">出力:</span>
+        <input type="text" id="output-text" readonly placeholder="地図をクリックしてピンを設置してください">
+        <button id="copy-btn" onclick="copyToClipboard()">コピー</button>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
