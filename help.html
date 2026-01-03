@@ -59,6 +59,24 @@
             color: #c7254e;
         }
 
+        /* 注意書き用のスタイル */
+        .alert-box {
+            background: #fff5f5;
+            border: 1px solid #feb2b2;
+            border-left: 5px solid #f56565;
+            padding: 20px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+
+        .alert-title {
+            font-weight: bold;
+            color: #c53030;
+            display: block;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+
         .note {
             background: #fff3cd;
             color: #856404;
@@ -87,6 +105,24 @@
             margin-top: 40px;
             text-align: center;
         }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+            font-size: 0.9em;
+        }
+
+        table th,
+        table td {
+            border: 1px solid #dee2e6;
+            padding: 10px;
+            text-align: left;
+        }
+
+        table th {
+            background: #f8f9fa;
+        }
     </style>
 </head>
 
@@ -94,13 +130,43 @@
 
     <div class="container">
         <h1>📍 座標取得ツール ヘルプ</h1>
-        <p>このツールを利用するために必要な「Google Maps APIキー」の取得方法と設定手順を解説します。</p>
+        <p>このツールを利用するために必要な「Google Maps APIキー」の取得方法を解説します。</p>
+
+        <div class="alert-box">
+            <span class="alert-title">⚠️ APIキー作成前にお読みください</span>
+            <p>GoogleのAPIキーを取得する際、<strong>会社のアカウント</strong>か<strong>個人用アカウント</strong>か迷う場合があります。以下の点にご注意ください。</p>
+
+            <table>
+                <tr>
+                    <th>項目</th>
+                    <th>個人用アカウント (@gmail.com)</th>
+                    <th>会社アカウント (@会社名.net)</th>
+                </tr>
+                <tr>
+                    <td><strong>支払い登録</strong></td>
+                    <td>ご自身のカード登録が必要</td>
+                    <td>会社の管理設定に依存します</td>
+                </tr>
+                <tr>
+                    <td><strong>利用制限</strong></td>
+                    <td>制限なく作成可能</td>
+                    <td>IT部門により禁止されている場合があります</td>
+                </tr>
+            </table>
+
+            <p><strong>【推奨】</strong><br>
+                2〜3名での小規模な利用で、会社側でGoogle
+                Cloudの設定が済んでいない場合は、<strong>個人用のGoogleアカウント</strong>での作成が最もスムーズです。月間200ドル（約3万円）分の無料枠があるため、通常の業務利用であれば料金が発生することはありませんが、<strong>無料枠内であってもクレジットカード等の登録は必須</strong>となります。
+            </p>
+        </div>
+
+        <hr>
 
         <h2>手順1：APIキーを取得する</h2>
-        <p>Googleの地図サービスを利用するための「鍵」を取得します。以下の手順で行ってください。</p>
+        <p>Googleの地図サービスを利用するための「鍵」を取得します。</p>
         <ol>
             <li><a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a> にアクセスします。</li>
-            <li>画面上部のプロジェクト選択部分から<strong>「新しいプロジェクト」</strong>を作成します（名前は「Map-Tool」など自由です）。</li>
+            <li>画面上部のプロジェクト選択部分から<strong>「新しいプロジェクト」</strong>を作成します。</li>
             <li>メニューの「APIとサービス」＞「ライブラリ」を開き、以下の3つを検索して<strong>【有効】</strong>にしてください。
                 <ul>
                     <li><strong>Maps JavaScript API</strong></li>
@@ -109,29 +175,22 @@
                 </ul>
             </li>
             <li>「APIとサービス」＞「認証情報」を開き、<strong>「＋ 認証情報を作成」＞「APIキー」</strong>をクリックします。</li>
-            <li>表示された長い文字列（APIキー）をコピーしてください。</li>
+            <li>表示されたAPIキーをコピーしてください。</li>
         </ol>
 
         <div class="note">
-            <strong>💡 重要：課金を防ぐ設定（推奨）</strong><br>
-            「APIとサービス」＞「割り当て」から、Geocoding API等の「1日あたりのリクエスト数」を <code>1000</code> に設定することをお勧めします。これで無料枠を超える心配がなくなります。
+            <strong>💡 安全のための設定</strong><br>
+            「APIとサービス」＞「割り当て」から、各APIの「1日あたりのリクエスト数」を <code>1000</code> 程度に制限しておくと、万が一の際も課金が発生せず安心です。
         </div>
 
         <h2>手順2：ツールに設定する</h2>
         <p>取得したキーをツールに入力します。</p>
         <ol>
             <li>ツールの初期設定画面に戻ります。</li>
-            <li>入力欄に、手順1でコピーしたAPIキーを貼り付けます。</li>
+            <li>入力欄に、コピーしたAPIキーを貼り付けます。</li>
             <li><strong>「利用開始」</strong>ボタンを押してください。</li>
         </ol>
-        <p>※ 入力したキーはブラウザに保存されるため、次回からは入力不要です。</p>
-
-        <h2>困ったときは</h2>
-        <h3>Q. 「エラーが発生しました」と出る</h3>
-        <p>APIキーが間違っているか、Google Cloud側で「請求先アカウント」の設定が完了していない可能性があります。Google Cloud Consoleを確認してください。</p>
-
-        <h3>Q. キーを間違えて登録してしまった</h3>
-        <p>ツールの画面右上にある歯車アイコン（⚙️）をクリックし、<strong>「🔑 APIキーを削除する」</strong>を選択すると、再入力できるようになります。</p>
+        <p>※ キーはブラウザに保存されるため、次回から入力は不要です。</p>
 
         <div class="back-link">
             <a href="javascript:window.close();" class="btn">この画面を閉じる</a>
