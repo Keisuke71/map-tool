@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <title>座標取得ツール</title>
     <style>
-        /* 基本レイアウト */
+        /* --- 既存のCSS --- */
         body {
             margin: 0;
             padding: 0;
@@ -15,7 +15,6 @@
             flex-direction: column;
         }
 
-        /* 上部操作バー */
         #controls {
             padding: 10px 20px;
             background: #2c3e50;
@@ -94,6 +93,9 @@
         .settings-container {
             margin-left: auto;
             position: relative;
+            display: flex;
+            align-items: center;
+            gap: 15px;
         }
 
         #settings-btn {
@@ -139,7 +141,6 @@
             color: #007bff;
         }
 
-        /* メインコンテナ */
         #main-container {
             display: flex;
             flex: 1;
@@ -231,85 +232,27 @@
             width: 100px;
         }
 
-        /* APIキー入力モーダル */
-        #api-key-modal {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.8);
-            z-index: 9999;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-
-        .modal-content {
-            background: white;
-            padding: 30px;
-            border-radius: 8px;
-            width: 400px;
-            text-align: center;
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-        }
-
-        .modal-content h2 {
-            margin-top: 0;
-            color: #2c3e50;
-        }
-
-        .modal-content p {
-            color: #666;
-            font-size: 14px;
-            margin-bottom: 20px;
-            text-align: left;
-        }
-
-        #api-key-input {
-            width: 100%;
-            padding: 10px;
-            margin-bottom: 15px;
-            box-sizing: border-box;
-            border: 1px solid #ccc;
+        /* --- 新規追加: 残り回数表示用 --- */
+        #quota-display {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 5px 10px;
             border-radius: 4px;
-            font-size: 16px;
-        }
-
-        #save-key-btn {
-            width: 100%;
-            background: #27ae60;
-            padding: 10px;
-            font-size: 16px;
-        }
-
-        #save-key-btn:hover {
-            background: #219150;
+            font-size: 14px;
+            font-weight: bold;
+            color: #f1c40f;
+            /* 黄色で強調 */
+            border: 1px solid #f1c40f;
         }
     </style>
 </head>
 
 <body>
-
-    <div id="api-key-modal" style="display: none;">
-        <div class="modal-content">
-            <h2>初期設定</h2>
-            <p>
-                ツールを利用するには Google Maps APIキーが必要です。<br>
-                詳細な設定方法は<a href="help.html" target="_blank"
-                    style="color:#3498db; font-weight:bold; text-decoration:underline;">こちら</a>をご覧ください。
-            </p>
-            <input type="text" id="api-key-input" placeholder="APIキーを入力してください">
-            <button id="save-key-btn" onclick="saveApiKey()">利用開始</button>
-        </div>
-    </div>
-
     <div id="controls">
         <div class="input-group">
             <span style="font-size:20px;">🗺️</span>
-            <input type="text" id="address-input" placeholder="住所を入力してください"
-                onkeydown="if(event.key==='Enter') geocodeAddress()">
-            <button onclick="geocodeAddress()">検索</button>
+            <input type="text" id="address-input" placeholder="住所を入力してください">
+
+            <button id="search-btn">検索</button>
         </div>
 
         <div class="radius-group">
@@ -322,10 +265,11 @@
         </div>
 
         <div class="settings-container">
+            <div id="quota-display">読み込み中...</div>
+
             <button id="settings-btn" onclick="toggleSettings()" title="設定">⚙️</button>
             <div id="settings-menu" class="dropdown-menu">
                 <div class="menu-item" onclick="toggleLayout()">🔄 配置を切り替える</div>
-                <div class="menu-item" onclick="resetApiKey()" style="color:red;">🔑 APIキーを削除する</div>
                 <a href="https://github.com/Keisuke71" target="_blank" class="menu-item">👨‍💻 Developed by
                     k4.matsumoto</a>
             </div>
@@ -349,7 +293,48 @@
         <button id="copy-btn" onclick="copyToClipboard()">コピー</button>
     </div>
 
+    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&libraries=places"></script>
+
     <script src="script.js"></script>
+
+    <script type="module">
+        import { initUsageLimit, checkAndConsumeQuota } from './usageLimit.js';
+
+        // 画面読み込み時に初期化
+        window.addEventListener('load', () => {
+            const displayBox = document.getElementById('quota-display');
+            initUsageLimit(displayBox);
+        });
+
+        // 検索実行のラッパー関数
+        async function handleSearch() {
+            const addressInput = document.getElementById('address-input');
+            if (!addressInput.value) return;
+
+            // ★ここでFirebaseに問い合わせ！
+            const canUse = await checkAndConsumeQuota();
+
+            if (canUse) {
+                // 許可が出たら、script.js にある(はずの)地図検索関数を実行
+                // ※script.js側に geocodeAddress() が定義されている前提です
+                if (typeof geocodeAddress === 'function') {
+                    geocodeAddress();
+                } else {
+                    alert('エラー: 地図機能(script.js)が読み込まれていません');
+                }
+            }
+        }
+
+        // ボタンクリックイベントの設定
+        document.getElementById('search-btn').addEventListener('click', handleSearch);
+
+        // Enterキーでも検索できるように設定
+        document.getElementById('address-input').addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                handleSearch();
+            }
+        });
+    </script>
 </body>
 
 </html>
