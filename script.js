@@ -206,6 +206,7 @@ function setRadius(radius) {
     }
 }
 
+// 修正版 setImpossible 関数
 function setImpossible() {
     // 1. ボタンの見た目をアクティブにする
     document.querySelectorAll('.radius-btn').forEach(btn => btn.classList.remove('active'));
@@ -215,28 +216,37 @@ function setImpossible() {
     // 2. コピーする文章
     const text = "ジオ付与不可能（消防出動情報向けのメッセージです）";
 
-    // 3. 下の入力欄にも一応表示しておく（何がコピーされたか視覚的にわかるようにするため）
+    // 3. 下の入力欄にも表示
     document.getElementById("output-text").value = text;
 
-    // 4. 即座にクリップボードにコピーする処理
+    // 4. クリップボードにコピー
     navigator.clipboard.writeText(text).then(() => {
-        // 成功したらボタンの見た目を変えて合図する
-        const originalText = impBtn.innerText; // 元の文字（"不可"）を記憶
-        const originalBg = impBtn.style.backgroundColor;
+        // ★修正点: 連打された場合、前の「戻すタイマー」をキャンセルする
+        if (impBtn.dataset.timer) {
+            clearTimeout(impBtn.dataset.timer);
+        }
 
+        // ボタンの表示を変更
         impBtn.innerText = "コピー完了!";
-        impBtn.style.backgroundColor = "#27ae60"; // 緑色にする
+        impBtn.style.backgroundColor = "#27ae60";
         impBtn.style.border = "1px solid #fff";
 
-        // 1秒後に元の見た目に戻す
-        setTimeout(() => {
-            impBtn.innerText = originalText;
-            impBtn.style.backgroundColor = originalBg;
+        // 1秒後に元に戻すタイマーをセット
+        const timerId = setTimeout(() => {
+            // ★修正点: 「元の文字」を取得せず、強制的に「不可」に戻す
+            impBtn.innerText = "不可"; 
+            
+            // 色はCSSクラス(.radius-btn)やID(#impossible-btn)のスタイルに戻すため空にする
+            impBtn.style.backgroundColor = ""; 
             impBtn.style.border = "";
+            delete impBtn.dataset.timer;
         }, 1000);
+
+        // タイマーIDをボタンに保存しておく
+        impBtn.dataset.timer = timerId;
+
     }).catch(err => {
         console.error('コピー失敗:', err);
-        alert('コピーに失敗しました。ブラウザの権限を確認してください。');
     });
 }
 
