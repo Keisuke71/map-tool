@@ -225,24 +225,52 @@ function geocodeAddress() {
     const address = document.getElementById("address-input").value;
     if (!address || !geocoder) return;
 
-    // ★ここで検索実行分のカウントを行う
+    // 回数カウント
     QuotaManager.increment();
 
     geocoder.geocode({ 'address': address }, (results, status) => {
         if (status === 'OK') {
             const result = results[0];
-            map.setCenter(result.geometry.location);
+            const location = result.geometry.location;
+
+            // 1. 先にピンと円を配置する（これでマーカー変数が更新されます）
+            placeMarkerAndCircle(location);
+
+            // ★修正: ピンが青枠に埋もれないよう、最前面に表示する設定を追加
+            if (marker) {
+                marker.setZIndex(google.maps.Marker.MAX_ZINDEX + 1);
+            }
+
+            // 2. 青枠（境界線）の処理
             if (boundsRect) boundsRect.setMap(null);
             if (result.geometry.bounds) {
-                map.fitBounds(result.geometry.bounds);
+                // 境界線を描画
                 boundsRect = new google.maps.Rectangle({
-                    strokeColor: "#0000FF", strokeOpacity: 0.5, strokeWeight: 2,
-                    fillOpacity: 0, map: map, bounds: result.geometry.bounds, clickable: false
+                    strokeColor: "#0000FF",
+                    strokeOpacity: 0.5,
+                    strokeWeight: 2,
+                    fillOpacity: 0,
+                    map: map,
+                    bounds: result.geometry.bounds,
+                    clickable: false,
+                    zIndex: 1 // 枠は奥に表示
                 });
+
+                // ★修正: 境界線に合わせてズームした後、中心を「ピンの位置」に強制的に戻す
+                map.fitBounds(result.geometry.bounds);
+
+                // fitBoundsは非同期で動くことがあるため、念のため少し待ってから中心を合わせるか、
+                // あるいはpanToで滑らかに移動させることでピンを見失わないようにします
+                map.panTo(location);
+
             } else {
+                map.setCenter(location);
                 map.setZoom(16);
             }
+
+            // 3. 参照用マップの更新
             updateRefMap(address);
+
         } else {
             alert('検索できませんでした: ' + status);
         }
