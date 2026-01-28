@@ -168,6 +168,11 @@ function placeMarkerAndCircle(latLng) {
     marker.addListener("dragend", (e) => {
         updateCirclePosition(e.latLng);
         generateOutput(e.latLng);
+        
+        // 右側の参照マップもその座標に更新する（無料）
+        const lat = e.latLng.lat();
+        const lng = e.latLng.lng();
+        updateRefMap(`${lat},${lng}`); 
     });
 
     drawCircle(latLng);
@@ -201,11 +206,48 @@ function setRadius(radius) {
     }
 }
 
+// 修正版 setImpossible 関数
 function setImpossible() {
+    // 1. ボタンの見た目をアクティブにする
     document.querySelectorAll('.radius-btn').forEach(btn => btn.classList.remove('active'));
     const impBtn = document.getElementById('impossible-btn');
     if (impBtn) impBtn.classList.add('active');
-    document.getElementById("output-text").value = "ジオ付与不可能（消防出動情報向けのメッセージです）";
+
+    // 2. コピーする文章
+    const text = "ジオ付与不可能（消防出動情報向けのメッセージです）";
+
+    // 3. 下の入力欄にも表示
+    document.getElementById("output-text").value = text;
+
+    // 4. クリップボードにコピー
+    navigator.clipboard.writeText(text).then(() => {
+        // ★修正点: 連打された場合、前の「戻すタイマー」をキャンセルする
+        if (impBtn.dataset.timer) {
+            clearTimeout(impBtn.dataset.timer);
+        }
+
+        // ボタンの表示を変更
+        impBtn.innerText = "コピー完了!";
+        impBtn.style.backgroundColor = "#27ae60";
+        impBtn.style.border = "1px solid #fff";
+
+        // 1秒後に元に戻すタイマーをセット
+        const timerId = setTimeout(() => {
+            // ★修正点: 「元の文字」を取得せず、強制的に「不可」に戻す
+            impBtn.innerText = "不可"; 
+            
+            // 色はCSSクラス(.radius-btn)やID(#impossible-btn)のスタイルに戻すため空にする
+            impBtn.style.backgroundColor = ""; 
+            impBtn.style.border = "";
+            delete impBtn.dataset.timer;
+        }, 1000);
+
+        // タイマーIDをボタンに保存しておく
+        impBtn.dataset.timer = timerId;
+
+    }).catch(err => {
+        console.error('コピー失敗:', err);
+    });
 }
 
 function resetImpossibleState() {
@@ -280,8 +322,11 @@ function geocodeAddress() {
 function updateRefMap(query) {
     const frame = document.getElementById("ref-frame");
     if (frame && apiKey) {
-        // ※ Embed APIは無料なのでカウントしていませんが、必要ならここでも QuotaManager.increment() を呼べます
-        const embedUrl = `https://www.google.com/maps/embed/v1/place?key=${apiKey}&q=${encodeURIComponent(query)}`;
+        // queryが "lat,lng" の形式か、住所文字列かで出し分け可能ですが、
+        // Embed APIは q=パラメータにそのまま入れて自動判別してくれます。
+        
+        // 正しいEmbed APIのURL形式
+        const embedUrl = `https://www.google.com/maps/embed/v1/place?key=${apiKey}&q=${query}`;
         frame.src = embedUrl;
     }
 }
