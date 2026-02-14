@@ -2,7 +2,7 @@
    APIキー管理と初期化処理
    ========================================= */
 const STORAGE_KEY_API = "googleMapsApiKey";
-const STORAGE_KEY_AUTO_RADIUS = "autoRadiusEnabled"; // 新規: 設定保存用
+const STORAGE_KEY_AUTO_RADIUS = "autoRadiusEnabled";
 
 let apiKey = localStorage.getItem(STORAGE_KEY_API);
 let isAutoRadiusEnabled = localStorage.getItem(STORAGE_KEY_AUTO_RADIUS) !== "false"; // デフォルトON
@@ -77,7 +77,7 @@ const QuotaManager = {
    ========================================= */
 document.addEventListener("DOMContentLoaded", () => {
     QuotaManager.updateDisplay();
-    updateAutoRadiusDisplay(); // 設定の表示更新
+    updateAutoRadiusDisplay();
 
     if (apiKey) {
         QuotaManager.increment();
@@ -106,7 +106,6 @@ function resetApiKey() {
     }
 }
 
-// 自動半径計算のON/OFF切り替え
 function toggleAutoRadius() {
     isAutoRadiusEnabled = !isAutoRadiusEnabled;
     localStorage.setItem(STORAGE_KEY_AUTO_RADIUS, isAutoRadiusEnabled);
@@ -125,7 +124,6 @@ function loadGoogleMapsScript(key) {
     if (window.google && window.google.maps) return;
 
     const script = document.createElement("script");
-    // libraries=places,geometry
     script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places,geometry&callback=initMap`;
     script.async = true;
     script.defer = true;
@@ -215,7 +213,6 @@ function setRadius(radius) {
     currentRadius = radius;
     document.querySelectorAll('.radius-btn').forEach(btn => btn.classList.remove('active'));
 
-    // 値でボタンを探してアクティブにする
     const btns = document.querySelectorAll('.radius-btn');
     btns.forEach(btn => {
         let btnVal = parseInt(btn.innerText);
@@ -235,7 +232,7 @@ function setRadius(radius) {
     }
 }
 
-// 不可ボタン（連打対策済み）
+// 不可ボタン
 function setImpossible() {
     document.querySelectorAll('.radius-btn').forEach(btn => btn.classList.remove('active'));
     const impBtn = document.getElementById('impossible-btn');
@@ -280,14 +277,13 @@ function resetImpossibleState() {
     }
 }
 
-// ★修正版: 住所検索 (自動ON/OFF対応 + 計算結果表示)
+// ★修正版: 住所検索 (広めの半径計算)
 function geocodeAddress() {
     const address = document.getElementById("address-input").value;
     const calcDisplay = document.getElementById("calculated-radius-display");
 
     if (!address || !geocoder) return;
 
-    // 表示をクリア
     if (calcDisplay) calcDisplay.innerText = "";
 
     QuotaManager.increment();
@@ -297,16 +293,15 @@ function geocodeAddress() {
             const result = results[0];
             const location = result.geometry.location;
 
-            // 厳密な範囲(bounds)があれば優先、なければviewport
+            // 厳密な範囲(bounds)があれば優先
             const searchArea = result.geometry.bounds || result.geometry.viewport;
 
-            // ★設定がONなら自動計算を実行
+            // ★修正: 広めの半径計算 (全体が入るようにする)
             if (isAutoRadiusEnabled && searchArea) {
-                const northLat = searchArea.getNorthEast().lat();
-                const northEdge = new google.maps.LatLng(northLat, location.lng());
-                const distance = Math.round(google.maps.geometry.spherical.computeDistanceBetween(location, northEdge));
+                // 北東の「角」までの距離を測ることで、四角全体をカバーする
+                const corner = searchArea.getNorthEast();
+                const distance = Math.round(google.maps.geometry.spherical.computeDistanceBetween(location, corner));
 
-                // プリセット: 50, 100, 300, 500, 1000
                 const presets = [50, 100, 300, 500, 1000];
                 let bestRadius = 1000;
 
@@ -320,12 +315,10 @@ function geocodeAddress() {
 
                 setRadius(bestRadius);
 
-                // ★計算結果を表示 (例: "検出範囲: 123m → 300mを設定")
                 if (calcDisplay) {
-                    calcDisplay.innerText = `検出範囲: ${distance}m → ${bestRadius}mを設定`;
+                    calcDisplay.innerText = `検出範囲(対角): ${distance}m → ${bestRadius}mを設定`;
                 }
             } else {
-                // OFFの場合は表示だけ更新して半径は変えない（または "手動" と表示）
                 if (calcDisplay && isAutoRadiusEnabled) {
                     calcDisplay.innerText = "範囲データなし";
                 }
@@ -382,29 +375,27 @@ function generateOutput(latLng) {
     document.getElementById("output-text").value = text;
 }
 
+// ★修正版: コピーボタン (引数対応)
 function copyToClipboard(triggerBtn) {
     const copyText = document.getElementById("output-text");
 
-    // もし引数がなければ（念のため）、下のボタンを対象にする
+    // 引数がない場合は既存の下ボタンを対象にする
     const btn = triggerBtn || document.getElementById('copy-btn');
 
     copyText.select();
     navigator.clipboard.writeText(copyText.value).then(() => {
-        // 連打対策: 前のタイマーがあればキャンセル
         if (btn.dataset.timer) clearTimeout(btn.dataset.timer);
 
-        // 元の文字と色を保存（ボタンによって色が違うため）
         const originalText = "コピー";
-        const originalBg = btn.id === "header-copy-btn" ? "#e67e22" : "#e74c3c"; // 上はオレンジ、下は赤
+        // ボタンIDで色を分岐
+        const originalBg = (btn.id === "header-copy-btn") ? "#e67e22" : "#e74c3c";
 
-        // 完了表示に変更
         btn.innerText = "完了!";
-        btn.style.backgroundColor = "#27ae60"; // 緑色
+        btn.style.backgroundColor = "#27ae60";
 
-        // 1秒後に元に戻す
         const timerId = setTimeout(() => {
             btn.innerText = originalText;
-            btn.style.backgroundColor = originalBg; // 元の色に戻す
+            btn.style.backgroundColor = originalBg;
             delete btn.dataset.timer;
         }, 1000);
 
@@ -430,4 +421,3 @@ function toggleLayout() {
 }
 
 window.deleteApiKey = resetApiKey;
-// window.toggleAutoRadius = toggleAutoRadius; // HTMLから呼ぶため不要だが明示しても良い
