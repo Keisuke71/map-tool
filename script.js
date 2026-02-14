@@ -1,7 +1,12 @@
 /* =========================================
    APIキー管理と初期化処理
    ========================================= */
-let apiKey = localStorage.getItem("googleMapsApiKey");
+const STORAGE_KEY_API = "googleMapsApiKey";
+const STORAGE_KEY_AUTO_RADIUS = "autoRadiusEnabled"; // 新規: 設定保存用
+
+let apiKey = localStorage.getItem(STORAGE_KEY_API);
+let isAutoRadiusEnabled = localStorage.getItem(STORAGE_KEY_AUTO_RADIUS) !== "false"; // デフォルトON
+
 let map, marker, circle, boundsRect, geocoder;
 let currentRadius = 300;
 
@@ -11,33 +16,16 @@ const QUOTA_LIMITS = {
     MONTHLY: 10000   // 1ヶ月の目安
 };
 
-// ページ読み込み時に実行
-document.addEventListener("DOMContentLoaded", () => {
-    // 画面表示を初期化
-    QuotaManager.updateDisplay();
-
-    if (apiKey) {
-        // キーがあれば地図APIを読み込む
-        // ★ここで「地図表示」分のカウントを行う
-        QuotaManager.increment();
-        loadGoogleMapsScript(apiKey);
-    } else {
-        // キーがなければ入力画面を表示
-        document.getElementById("api-key-modal").style.display = "flex";
-    }
-});
-
 /* =========================================
-   ★回数管理クラス (新規追加)
+   回数管理クラス
    ========================================= */
 const QuotaManager = {
     storageKey: "googleMapsUsageStats",
 
-    // データを取得・リセット判定
     getData: function () {
         const now = new Date();
-        const todayStr = now.toISOString().slice(0, 10); // "2026-01-04"
-        const monthStr = now.toISOString().slice(0, 7);  // "2026-01"
+        const todayStr = now.toISOString().slice(0, 10);
+        const monthStr = now.toISOString().slice(0, 7);
 
         let data = JSON.parse(localStorage.getItem(this.storageKey)) || {
             date: todayStr,
@@ -46,12 +34,10 @@ const QuotaManager = {
             monthlyCount: 0
         };
 
-        // 日替わりリセット
         if (data.date !== todayStr) {
             data.date = todayStr;
             data.dailyCount = 0;
         }
-        // 月替わりリセット
         if (data.month !== monthStr) {
             data.month = monthStr;
             data.monthlyCount = 0;
@@ -60,7 +46,6 @@ const QuotaManager = {
         return data;
     },
 
-    // カウントアップして保存
     increment: function () {
         const data = this.getData();
         data.dailyCount++;
@@ -69,7 +54,6 @@ const QuotaManager = {
         this.updateDisplay();
     },
 
-    // 画面表示の更新
     updateDisplay: function () {
         const el = document.getElementById("quota-display");
         if (!el) return;
@@ -78,7 +62,6 @@ const QuotaManager = {
         const dailyLeft = QUOTA_LIMITS.DAILY - data.dailyCount;
         const monthlyLeft = QUOTA_LIMITS.MONTHLY - data.monthlyCount;
 
-        // 0未満にならないように調整
         const dShow = dailyLeft < 0 ? 0 : dailyLeft;
         const mShow = monthlyLeft < 0 ? 0 : monthlyLeft;
 
@@ -89,29 +72,61 @@ const QuotaManager = {
     }
 };
 
-// 入力されたAPIキーを保存してリロード
+/* =========================================
+   初期化プロセス
+   ========================================= */
+document.addEventListener("DOMContentLoaded", () => {
+    QuotaManager.updateDisplay();
+    updateAutoRadiusDisplay(); // 設定の表示更新
+
+    if (apiKey) {
+        QuotaManager.increment();
+        loadGoogleMapsScript(apiKey);
+    } else {
+        const modal = document.getElementById("api-key-modal");
+        if (modal) modal.style.display = "flex";
+    }
+});
+
 function saveApiKey() {
-    const inputKey = document.getElementById("api-key-input").value.trim();
+    const input = document.getElementById("api-key-input");
+    const inputKey = input.value.trim();
     if (inputKey) {
-        localStorage.setItem("googleMapsApiKey", inputKey);
+        localStorage.setItem(STORAGE_KEY_API, inputKey);
         location.reload();
     } else {
         alert("APIキーを入力してください");
     }
 }
 
-// APIキーを削除する
 function resetApiKey() {
     if (confirm("保存されたAPIキーを削除しますか？\n次回利用時に入力が求められます。")) {
-        localStorage.removeItem("googleMapsApiKey");
+        localStorage.removeItem(STORAGE_KEY_API);
         location.reload();
     }
 }
 
-// 動的にGoogle Maps APIを読み込む関数
+// 自動半径計算のON/OFF切り替え
+function toggleAutoRadius() {
+    isAutoRadiusEnabled = !isAutoRadiusEnabled;
+    localStorage.setItem(STORAGE_KEY_AUTO_RADIUS, isAutoRadiusEnabled);
+    updateAutoRadiusDisplay();
+}
+
+function updateAutoRadiusDisplay() {
+    const el = document.getElementById("auto-radius-status");
+    if (el) {
+        el.innerText = isAutoRadiusEnabled ? "ON" : "OFF";
+        el.style.color = isAutoRadiusEnabled ? "#27ae60" : "#c0392b";
+    }
+}
+
 function loadGoogleMapsScript(key) {
+    if (window.google && window.google.maps) return;
+
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places&callback=initMap`;
+    // libraries=places,geometry
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places,geometry&callback=initMap`;
     script.async = true;
     script.defer = true;
     script.onerror = () => {
@@ -121,7 +136,7 @@ function loadGoogleMapsScript(key) {
 }
 
 /* =========================================
-   Google Maps 初期化 (callback)
+   Google Maps 初期化
    ========================================= */
 window.initMap = function () {
     geocoder = new google.maps.Geocoder();
@@ -135,7 +150,8 @@ window.initMap = function () {
             mapTypeId: 'roadmap',
             streetViewControl: false,
             clickableIcons: false,
-            fullscreenControl: false
+            fullscreenControl: false,
+            mapTypeControl: true
         });
 
         map.addListener("click", (e) => {
@@ -163,16 +179,19 @@ function placeMarkerAndCircle(latLng) {
     if (marker) marker.setMap(null);
     if (circle) circle.setMap(null);
 
-    marker = new google.maps.Marker({ position: latLng, map: map, draggable: true });
+    marker = new google.maps.Marker({
+        position: latLng,
+        map: map,
+        draggable: true,
+        zIndex: google.maps.Marker.MAX_ZINDEX + 1
+    });
 
     marker.addListener("dragend", (e) => {
         updateCirclePosition(e.latLng);
         generateOutput(e.latLng);
-        
-        // 右側の参照マップもその座標に更新する（無料）
         const lat = e.latLng.lat();
         const lng = e.latLng.lng();
-        updateRefMap(`${lat},${lng}`); 
+        updateRefMap(`${lat},${lng}`);
     });
 
     drawCircle(latLng);
@@ -195,7 +214,17 @@ function updateCirclePosition(latLng) {
 function setRadius(radius) {
     currentRadius = radius;
     document.querySelectorAll('.radius-btn').forEach(btn => btn.classList.remove('active'));
-    if (event && event.target) event.target.classList.add('active');
+
+    // 値でボタンを探してアクティブにする
+    const btns = document.querySelectorAll('.radius-btn');
+    btns.forEach(btn => {
+        let btnVal = parseInt(btn.innerText);
+        if (btn.innerText.includes("km")) btnVal *= 1000;
+
+        if (btnVal === radius) {
+            btn.classList.add('active');
+        }
+    });
 
     const impBtn = document.getElementById('impossible-btn');
     if (impBtn) impBtn.classList.remove('active');
@@ -206,45 +235,30 @@ function setRadius(radius) {
     }
 }
 
-// 修正版 setImpossible 関数
+// 不可ボタン（連打対策済み）
 function setImpossible() {
-    // 1. ボタンの見た目をアクティブにする
     document.querySelectorAll('.radius-btn').forEach(btn => btn.classList.remove('active'));
     const impBtn = document.getElementById('impossible-btn');
     if (impBtn) impBtn.classList.add('active');
 
-    // 2. コピーする文章
     const text = "ジオ付与不可能（消防出動情報向けのメッセージです）";
-
-    // 3. 下の入力欄にも表示
     document.getElementById("output-text").value = text;
 
-    // 4. クリップボードにコピー
     navigator.clipboard.writeText(text).then(() => {
-        // ★修正点: 連打された場合、前の「戻すタイマー」をキャンセルする
-        if (impBtn.dataset.timer) {
-            clearTimeout(impBtn.dataset.timer);
-        }
+        if (impBtn.dataset.timer) clearTimeout(impBtn.dataset.timer);
 
-        // ボタンの表示を変更
         impBtn.innerText = "コピー完了!";
         impBtn.style.backgroundColor = "#27ae60";
         impBtn.style.border = "1px solid #fff";
 
-        // 1秒後に元に戻すタイマーをセット
         const timerId = setTimeout(() => {
-            // ★修正点: 「元の文字」を取得せず、強制的に「不可」に戻す
-            impBtn.innerText = "不可"; 
-            
-            // 色はCSSクラス(.radius-btn)やID(#impossible-btn)のスタイルに戻すため空にする
-            impBtn.style.backgroundColor = ""; 
+            impBtn.innerText = "不可";
+            impBtn.style.backgroundColor = "";
             impBtn.style.border = "";
             delete impBtn.dataset.timer;
         }, 1000);
 
-        // タイマーIDをボタンに保存しておく
         impBtn.dataset.timer = timerId;
-
     }).catch(err => {
         console.error('コピー失敗:', err);
     });
@@ -254,6 +268,9 @@ function resetImpossibleState() {
     const impBtn = document.getElementById('impossible-btn');
     if (impBtn && impBtn.classList.contains('active')) {
         impBtn.classList.remove('active');
+        impBtn.innerText = "不可";
+        impBtn.style.backgroundColor = "";
+
         const radiusBtns = document.querySelectorAll('.radius-group button:not(#impossible-btn)');
         radiusBtns.forEach(btn => {
             let btnRadius = parseInt(btn.innerText);
@@ -263,11 +280,16 @@ function resetImpossibleState() {
     }
 }
 
+// ★修正版: 住所検索 (自動ON/OFF対応 + 計算結果表示)
 function geocodeAddress() {
     const address = document.getElementById("address-input").value;
+    const calcDisplay = document.getElementById("calculated-radius-display");
+
     if (!address || !geocoder) return;
 
-    // 回数カウント
+    // 表示をクリア
+    if (calcDisplay) calcDisplay.innerText = "";
+
     QuotaManager.increment();
 
     geocoder.geocode({ 'address': address }, (results, status) => {
@@ -275,42 +297,67 @@ function geocodeAddress() {
             const result = results[0];
             const location = result.geometry.location;
 
-            // 1. 先にピンと円を配置する（これでマーカー変数が更新されます）
+            // 厳密な範囲(bounds)があれば優先、なければviewport
+            const searchArea = result.geometry.bounds || result.geometry.viewport;
+
+            // ★設定がONなら自動計算を実行
+            if (isAutoRadiusEnabled && searchArea) {
+                const northLat = searchArea.getNorthEast().lat();
+                const northEdge = new google.maps.LatLng(northLat, location.lng());
+                const distance = Math.round(google.maps.geometry.spherical.computeDistanceBetween(location, northEdge));
+
+                // プリセット: 50, 100, 300, 500, 1000
+                const presets = [50, 100, 300, 500, 1000];
+                let bestRadius = 1000;
+
+                for (let r of presets) {
+                    if (r >= distance) {
+                        bestRadius = r;
+                        break;
+                    }
+                }
+                if (distance > 1000) bestRadius = 1000;
+
+                setRadius(bestRadius);
+
+                // ★計算結果を表示 (例: "検出範囲: 123m → 300mを設定")
+                if (calcDisplay) {
+                    calcDisplay.innerText = `検出範囲: ${distance}m → ${bestRadius}mを設定`;
+                }
+            } else {
+                // OFFの場合は表示だけ更新して半径は変えない（または "手動" と表示）
+                if (calcDisplay && isAutoRadiusEnabled) {
+                    calcDisplay.innerText = "範囲データなし";
+                }
+            }
+
             placeMarkerAndCircle(location);
 
-            // ★修正: ピンが青枠に埋もれないよう、最前面に表示する設定を追加
             if (marker) {
                 marker.setZIndex(google.maps.Marker.MAX_ZINDEX + 1);
             }
 
-            // 2. 青枠（境界線）の処理
+            // 青枠の描画
             if (boundsRect) boundsRect.setMap(null);
-            if (result.geometry.bounds) {
-                // 境界線を描画
+            if (searchArea) {
                 boundsRect = new google.maps.Rectangle({
                     strokeColor: "#0000FF",
                     strokeOpacity: 0.5,
                     strokeWeight: 2,
                     fillOpacity: 0,
                     map: map,
-                    bounds: result.geometry.bounds,
+                    bounds: searchArea,
                     clickable: false,
-                    zIndex: 1 // 枠は奥に表示
+                    zIndex: 1
                 });
 
-                // ★修正: 境界線に合わせてズームした後、中心を「ピンの位置」に強制的に戻す
-                map.fitBounds(result.geometry.bounds);
-
-                // fitBoundsは非同期で動くことがあるため、念のため少し待ってから中心を合わせるか、
-                // あるいはpanToで滑らかに移動させることでピンを見失わないようにします
+                map.fitBounds(searchArea);
                 map.panTo(location);
-
             } else {
                 map.setCenter(location);
                 map.setZoom(16);
             }
 
-            // 3. 参照用マップの更新
             updateRefMap(address);
 
         } else {
@@ -322,11 +369,7 @@ function geocodeAddress() {
 function updateRefMap(query) {
     const frame = document.getElementById("ref-frame");
     if (frame && apiKey) {
-        // queryが "lat,lng" の形式か、住所文字列かで出し分け可能ですが、
-        // Embed APIは q=パラメータにそのまま入れて自動判別してくれます。
-        
-        // 正しいEmbed APIのURL形式
-        const embedUrl = `https://www.google.com/maps/embed/v1/place?key=${apiKey}&q=${query}`;
+        const embedUrl = `https://www.google.com/maps/embed/v1/place?key=${apiKey}&q=${encodeURIComponent(query)}`;
         frame.src = embedUrl;
     }
 }
@@ -339,22 +382,35 @@ function generateOutput(latLng) {
     document.getElementById("output-text").value = text;
 }
 
-function copyToClipboard() {
+function copyToClipboard(triggerBtn) {
     const copyText = document.getElementById("output-text");
+
+    // もし引数がなければ（念のため）、下のボタンを対象にする
+    const btn = triggerBtn || document.getElementById('copy-btn');
+
     copyText.select();
     navigator.clipboard.writeText(copyText.value).then(() => {
-        const btn = document.getElementById('copy-btn');
+        // 連打対策: 前のタイマーがあればキャンセル
         if (btn.dataset.timer) clearTimeout(btn.dataset.timer);
 
-        btn.innerText = "完了!";
-        btn.style.backgroundColor = "#28a745";
+        // 元の文字と色を保存（ボタンによって色が違うため）
+        const originalText = "コピー";
+        const originalBg = btn.id === "header-copy-btn" ? "#e67e22" : "#e74c3c"; // 上はオレンジ、下は赤
 
+        // 完了表示に変更
+        btn.innerText = "完了!";
+        btn.style.backgroundColor = "#27ae60"; // 緑色
+
+        // 1秒後に元に戻す
         const timerId = setTimeout(() => {
-            btn.innerText = "コピー";
-            btn.style.backgroundColor = "";
+            btn.innerText = originalText;
+            btn.style.backgroundColor = originalBg; // 元の色に戻す
             delete btn.dataset.timer;
         }, 1000);
+
         btn.dataset.timer = timerId;
+    }).catch(err => {
+        console.error('コピー失敗:', err);
     });
 }
 
@@ -372,3 +428,6 @@ function toggleLayout() {
     }
     setTimeout(() => { if (map) google.maps.event.trigger(map, "resize"); }, 100);
 }
+
+window.deleteApiKey = resetApiKey;
+// window.toggleAutoRadius = toggleAutoRadius; // HTMLから呼ぶため不要だが明示しても良い
