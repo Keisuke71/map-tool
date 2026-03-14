@@ -4,6 +4,12 @@
 const STORAGE_KEY_API = "googleMapsApiKey";
 const STORAGE_KEY_AUTO_RADIUS = "autoRadiusEnabled";
 const STORAGE_KEY_LAYOUT = "layoutMode";
+const STORAGE_KEY_LIST_DATA = "mapToolListDataV1";
+const STORAGE_KEY_ADDRESS_COL = "mapToolAddressColumnV1";
+const STORAGE_KEY_OUTPUT_COL = "mapToolOutputColumnV1";
+const STORAGE_KEY_CURRENT_ROW = "mapToolCurrentRowIndexV1";
+const STORAGE_KEY_LIST_MODE_ENABLED = "mapToolListModeEnabledV1";
+
 
 let apiKey = localStorage.getItem(STORAGE_KEY_API);
 let isAutoRadiusEnabled = localStorage.getItem(STORAGE_KEY_AUTO_RADIUS) !== "false"; // デフォルトON
@@ -11,6 +17,13 @@ let layoutMode = localStorage.getItem(STORAGE_KEY_LAYOUT) || "layout-horizontal"
 
 let map, marker, circle, boundsRect, geocoder;
 let currentRadius = 300;
+let listData = [];
+let addressColumnIndex = Number(localStorage.getItem(STORAGE_KEY_ADDRESS_COL)) || 0;
+let outputColumnIndex = Number(localStorage.getItem(STORAGE_KEY_OUTPUT_COL)) || 4;
+let currentListRowIndex = Number(localStorage.getItem(STORAGE_KEY_CURRENT_ROW));
+if (!Number.isInteger(currentListRowIndex) || currentListRowIndex < 0) currentListRowIndex = -1;
+let isListModeEnabled = localStorage.getItem(STORAGE_KEY_LIST_MODE_ENABLED) !== "false";
+
 
 // ★設定: 回数制限の目安
 const QUOTA_LIMITS = {
@@ -81,6 +94,8 @@ document.addEventListener("DOMContentLoaded", () => {
     applySavedLayout();
     QuotaManager.updateDisplay();
     updateAutoRadiusDisplay();
+    restoreListState();
+    applyListModeVisibility();
 
     if (apiKey) {
         QuotaManager.increment();
@@ -443,3 +458,242 @@ function toggleLayout() {
 }
 
 window.deleteApiKey = resetApiKey;
+
+function applyListModeVisibility() {
+    const panel = document.getElementById("list-panel");
+    const toggle = document.getElementById("list-mode-toggle");
+    if (panel) panel.classList.toggle("hidden", !isListModeEnabled);
+    if (toggle) toggle.checked = isListModeEnabled;
+}
+
+function setListModeEnabled(enabled) {
+    isListModeEnabled = Boolean(enabled);
+    localStorage.setItem(STORAGE_KEY_LIST_MODE_ENABLED, String(isListModeEnabled));
+    applyListModeVisibility();
+}
+
+function parseTsvToRows(tsvText) {
+    const normalized = tsvText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    if (!normalized.trim()) return [];
+    return normalized.split("\n").map(line => line.split("\t"));
+}
+
+function rowsToTsv(rows) {
+    return rows.map(row => row.join("\t")).join("\n");
+}
+
+function getColumnIndexFromInput(inputId, label) {
+    const el = document.getElementById(inputId);
+    const value = Number(el ? el.value : NaN);
+    if (!Number.isInteger(value) || value < 1) {
+        throw new Error(`${label}は1以上の整数を入力してください`);
+    }
+    return value - 1;
+}
+
+function setListMessage(message, type = "") {
+    const el = document.getElementById("list-message");
+    if (!el) return;
+    el.className = type;
+    el.textContent = message;
+}
+
+function getCellValue(row, index) {
+    if (!Array.isArray(row) || index < 0 || index >= row.length) return "";
+    return (row[index] || "").trim();
+}
+
+function isPendingRow(row) {
+    const address = getCellValue(row, addressColumnIndex);
+    const output = getCellValue(row, outputColumnIndex);
+    return Boolean(address) && !output;
+}
+
+function updateListStatus() {
+    const total = listData.length;
+    const pending = listData.filter(isPendingRow).length;
+
+    const totalEl = document.getElementById("total-rows-display");
+    const pendingEl = document.getElementById("pending-rows-display");
+    const rowEl = document.getElementById("current-row-display");
+    const addrEl = document.getElementById("current-address-display");
+
+    if (totalEl) totalEl.textContent = String(total);
+    if (pendingEl) pendingEl.textContent = String(pending);
+
+    if (currentListRowIndex >= 0 && listData[currentListRowIndex]) {
+        if (rowEl) rowEl.textContent = String(currentListRowIndex + 1);
+        if (addrEl) addrEl.textContent = getCellValue(listData[currentListRowIndex], addressColumnIndex) || "-";
+    } else {
+        if (rowEl) rowEl.textContent = "-";
+        if (addrEl) addrEl.textContent = "-";
+    }
+}
+
+function persistListState() {
+    localStorage.setItem(STORAGE_KEY_LIST_DATA, JSON.stringify(listData));
+    localStorage.setItem(STORAGE_KEY_ADDRESS_COL, String(addressColumnIndex));
+    localStorage.setItem(STORAGE_KEY_OUTPUT_COL, String(outputColumnIndex));
+    localStorage.setItem(STORAGE_KEY_CURRENT_ROW, String(currentListRowIndex));
+}
+
+function restoreListState() {
+    const addressColInput = document.getElementById("address-column-input");
+    const outputColInput = document.getElementById("output-column-input");
+    const tsvInput = document.getElementById("list-tsv-input");
+
+    if (addressColInput) addressColInput.value = String(addressColumnIndex + 1);
+    if (outputColInput) outputColInput.value = String(outputColumnIndex + 1);
+
+    const raw = localStorage.getItem(STORAGE_KEY_LIST_DATA);
+    if (raw) {
+        try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                listData = parsed.map(row => Array.isArray(row) ? row.map(cell => cell == null ? "" : String(cell)) : []);
+                if (tsvInput) tsvInput.value = rowsToTsv(listData);
+            }
+        } catch (error) {
+            console.error("一覧データ復元失敗", error);
+        }
+    }
+
+    if (currentListRowIndex >= listData.length) currentListRowIndex = -1;
+    updateListStatus();
+}
+
+function loadTsvList() {
+    try {
+        const tsvInput = document.getElementById("list-tsv-input");
+        const rawText = tsvInput ? tsvInput.value : "";
+        const parsedRows = parseTsvToRows(rawText);
+
+        if (!parsedRows.length) {
+            setListMessage("貼り付けデータが空です。", "error");
+            return;
+        }
+
+        addressColumnIndex = getColumnIndexFromInput("address-column-input", "住所列番号");
+        outputColumnIndex = getColumnIndexFromInput("output-column-input", "出力列番号");
+
+        listData = parsedRows;
+        currentListRowIndex = -1;
+
+        persistListState();
+        updateListStatus();
+        setListMessage(`一覧を読み込みました（${listData.length}行）`, "success");
+    } catch (error) {
+        setListMessage(error.message || "一覧読み込みに失敗しました", "error");
+    }
+}
+
+function findNextPendingRow(startIndex) {
+    for (let i = Math.max(0, startIndex); i < listData.length; i++) {
+        if (isPendingRow(listData[i])) return i;
+    }
+    return -1;
+}
+
+function setAddressToMainInput(address) {
+    const input = document.getElementById("address-input");
+    if (!input) return;
+    input.value = address;
+    if (geocoder) geocodeAddress();
+}
+
+function showNextPendingAddress() {
+    if (!listData.length) {
+        setListMessage("先に一覧を読み込んでください。", "error");
+        return;
+    }
+
+    const start = currentListRowIndex >= 0 ? currentListRowIndex + 1 : 0;
+    const nextIndex = findNextPendingRow(start);
+
+    if (nextIndex === -1) {
+        currentListRowIndex = -1;
+        updateListStatus();
+        persistListState();
+        setListMessage("未処理の住所はありません。", "success");
+        return;
+    }
+
+    currentListRowIndex = nextIndex;
+    const address = getCellValue(listData[nextIndex], addressColumnIndex);
+    setAddressToMainInput(address);
+    updateListStatus();
+    persistListState();
+    setListMessage(`行${nextIndex + 1}の住所をセットしました。`, "success");
+}
+
+function ensureRowLength(row, length) {
+    while (row.length < length) row.push("");
+}
+
+function applyOutputToCurrentRow() {
+    if (!listData.length || currentListRowIndex < 0 || !listData[currentListRowIndex]) {
+        setListMessage("対象行がありません。先に未処理住所を表示してください。", "error");
+        return false;
+    }
+
+    const outputText = document.getElementById("output-text");
+    const outputValue = outputText ? outputText.value.trim() : "";
+    if (!outputValue) {
+        setListMessage("出力文が空です。地図操作後に反映してください。", "error");
+        return false;
+    }
+
+    const row = listData[currentListRowIndex];
+    ensureRowLength(row, outputColumnIndex + 1);
+    row[outputColumnIndex] = outputValue;
+
+    const tsvInput = document.getElementById("list-tsv-input");
+    if (tsvInput) tsvInput.value = rowsToTsv(listData);
+
+    persistListState();
+    updateListStatus();
+    setListMessage(`行${currentListRowIndex + 1}に反映しました。`, "success");
+    return true;
+}
+
+function applyOutputAndMoveNext() {
+    const applied = applyOutputToCurrentRow();
+    if (!applied) return;
+    showNextPendingAddress();
+}
+
+function copyUpdatedTsv() {
+    if (!listData.length) {
+        setListMessage("コピーできる一覧データがありません。", "error");
+        return;
+    }
+
+    const tsv = rowsToTsv(listData);
+    navigator.clipboard.writeText(tsv).then(() => {
+        setListMessage("更新済み一覧をコピーしました。", "success");
+    }).catch((error) => {
+        console.error("TSVコピー失敗", error);
+        setListMessage("コピーに失敗しました。", "error");
+    });
+}
+
+function copyOutputColumnOnly() {
+    if (!listData.length) {
+        setListMessage("コピーできる一覧データがありません。", "error");
+        return;
+    }
+
+    const outputLines = listData.map((row) => {
+        if (!Array.isArray(row) || outputColumnIndex < 0 || outputColumnIndex >= row.length) return "";
+        const value = row[outputColumnIndex];
+        return value == null ? "" : String(value);
+    });
+
+    const text = outputLines.join("\n");
+    navigator.clipboard.writeText(text).then(() => {
+        setListMessage("出力列のみをコピーしました。", "success");
+    }).catch((error) => {
+        console.error("出力列コピー失敗", error);
+        setListMessage("コピーに失敗しました。", "error");
+    });
+}
