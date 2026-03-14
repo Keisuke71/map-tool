@@ -3,9 +3,11 @@
    ========================================= */
 const STORAGE_KEY_API = "googleMapsApiKey";
 const STORAGE_KEY_AUTO_RADIUS = "autoRadiusEnabled";
+const STORAGE_KEY_LAYOUT = "layoutMode";
 
 let apiKey = localStorage.getItem(STORAGE_KEY_API);
 let isAutoRadiusEnabled = localStorage.getItem(STORAGE_KEY_AUTO_RADIUS) !== "false"; // デフォルトON
+let layoutMode = localStorage.getItem(STORAGE_KEY_LAYOUT) || "layout-horizontal";
 
 let map, marker, circle, boundsRect, geocoder;
 let currentRadius = 300;
@@ -76,6 +78,7 @@ const QuotaManager = {
    初期化プロセス
    ========================================= */
 document.addEventListener("DOMContentLoaded", () => {
+    applySavedLayout();
     QuotaManager.updateDisplay();
     updateAutoRadiusDisplay();
 
@@ -110,6 +113,19 @@ function toggleAutoRadius() {
     isAutoRadiusEnabled = !isAutoRadiusEnabled;
     localStorage.setItem(STORAGE_KEY_AUTO_RADIUS, isAutoRadiusEnabled);
     updateAutoRadiusDisplay();
+}
+
+function applySavedLayout() {
+    const container = document.getElementById("main-container");
+    if (!container) return;
+
+    container.classList.remove("layout-horizontal", "layout-vertical");
+
+    if (layoutMode !== "layout-vertical") {
+        layoutMode = "layout-horizontal";
+    }
+
+    container.classList.add(layoutMode);
 }
 
 function updateAutoRadiusDisplay() {
@@ -412,11 +428,17 @@ function toggleSettings() {
 
 function toggleLayout() {
     const container = document.getElementById("main-container");
+    if (!container) return;
+
     if (container.classList.contains("layout-horizontal")) {
-        container.classList.replace("layout-horizontal", "layout-vertical");
+        layoutMode = "layout-vertical";
     } else {
-        container.classList.replace("layout-vertical", "layout-horizontal");
+        layoutMode = "layout-horizontal";
     }
+
+    localStorage.setItem(STORAGE_KEY_LAYOUT, layoutMode);
+    applySavedLayout();
+
     setTimeout(() => { if (map) google.maps.event.trigger(map, "resize"); }, 100);
 }
 
