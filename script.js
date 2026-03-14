@@ -8,6 +8,7 @@ const STORAGE_KEY_LIST_DATA = "mapToolListDataV1";
 const STORAGE_KEY_ADDRESS_COL = "mapToolAddressColumnV1";
 const STORAGE_KEY_OUTPUT_COL = "mapToolOutputColumnV1";
 const STORAGE_KEY_CURRENT_ROW = "mapToolCurrentRowIndexV1";
+const STORAGE_KEY_LIST_MODE_ENABLED = "mapToolListModeEnabledV1";
 
 
 let apiKey = localStorage.getItem(STORAGE_KEY_API);
@@ -21,6 +22,7 @@ let addressColumnIndex = Number(localStorage.getItem(STORAGE_KEY_ADDRESS_COL)) |
 let outputColumnIndex = Number(localStorage.getItem(STORAGE_KEY_OUTPUT_COL)) || 4;
 let currentListRowIndex = Number(localStorage.getItem(STORAGE_KEY_CURRENT_ROW));
 if (!Number.isInteger(currentListRowIndex) || currentListRowIndex < 0) currentListRowIndex = -1;
+let isListModeEnabled = localStorage.getItem(STORAGE_KEY_LIST_MODE_ENABLED) !== "false";
 
 
 // ★設定: 回数制限の目安
@@ -93,6 +95,7 @@ document.addEventListener("DOMContentLoaded", () => {
     QuotaManager.updateDisplay();
     updateAutoRadiusDisplay();
     restoreListState();
+    applyListModeVisibility();
 
     if (apiKey) {
         QuotaManager.increment();
@@ -456,6 +459,18 @@ function toggleLayout() {
 
 window.deleteApiKey = resetApiKey;
 
+function applyListModeVisibility() {
+    const panel = document.getElementById("list-panel");
+    const toggle = document.getElementById("list-mode-toggle");
+    if (panel) panel.classList.toggle("hidden", !isListModeEnabled);
+    if (toggle) toggle.checked = isListModeEnabled;
+}
+
+function setListModeEnabled(enabled) {
+    isListModeEnabled = Boolean(enabled);
+    localStorage.setItem(STORAGE_KEY_LIST_MODE_ENABLED, String(isListModeEnabled));
+    applyListModeVisibility();
+}
 
 function parseTsvToRows(tsvText) {
     const normalized = tsvText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -658,6 +673,27 @@ function copyUpdatedTsv() {
         setListMessage("更新済み一覧をコピーしました。", "success");
     }).catch((error) => {
         console.error("TSVコピー失敗", error);
+        setListMessage("コピーに失敗しました。", "error");
+    });
+}
+
+function copyOutputColumnOnly() {
+    if (!listData.length) {
+        setListMessage("コピーできる一覧データがありません。", "error");
+        return;
+    }
+
+    const outputLines = listData.map((row) => {
+        if (!Array.isArray(row) || outputColumnIndex < 0 || outputColumnIndex >= row.length) return "";
+        const value = row[outputColumnIndex];
+        return value == null ? "" : String(value);
+    });
+
+    const text = outputLines.join("\n");
+    navigator.clipboard.writeText(text).then(() => {
+        setListMessage("出力列のみをコピーしました。", "success");
+    }).catch((error) => {
+        console.error("出力列コピー失敗", error);
         setListMessage("コピーに失敗しました。", "error");
     });
 }

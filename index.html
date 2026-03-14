@@ -363,6 +363,19 @@
         #list-message.success {
             color: #27ae60;
         }
+
+        #list-mode-toggle-row {
+            margin: 12px 0 6px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: #2c3e50;
+        }
+
+        #list-panel.hidden {
+            display: none;
+        }
     </style>
 </head>
 
@@ -379,6 +392,13 @@
         </div>
     </div>
 
+    <div id="list-mode-toggle-row">
+        <label>
+            <input type="checkbox" id="list-mode-toggle" checked>
+            一覧処理モードを使う（新版）
+        </label>
+    </div>
+
     <section id="list-panel">
         <h3>一覧処理（TSV貼り付け）</h3>
         <textarea id="list-tsv-input" placeholder="スプレッドシートからコピーしたデータをここに貼り付け"></textarea>
@@ -391,6 +411,7 @@
             <button id="apply-current-btn">現在の出力文をこの行に反映</button>
             <button id="apply-next-btn">反映して次へ</button>
             <button id="copy-updated-tsv-btn">更新済み一覧をコピー</button>
+            <button id="copy-output-column-btn">出力列のみコピー</button>
         </div>
 
         <div class="list-status">
@@ -473,6 +494,10 @@
             document.getElementById('apply-current-btn').addEventListener('click', applyOutputToCurrentRow);
             document.getElementById('apply-next-btn').addEventListener('click', applyOutputAndMoveNext);
             document.getElementById('copy-updated-tsv-btn').addEventListener('click', copyUpdatedTsv);
+            document.getElementById('copy-output-column-btn').addEventListener('click', copyOutputColumnOnly);
+            document.getElementById('list-mode-toggle').addEventListener('change', (event) => {
+                setListModeEnabled(event.target.checked);
+            });
 
             // Settings menu close handler is in script.js now, but kept safe here
         </script>
