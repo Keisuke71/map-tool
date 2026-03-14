@@ -299,6 +299,70 @@
             font-weight: bold;
             border-radius: 4px;
         }
+
+        #list-panel {
+            background: #eef3f7;
+            border-top: 1px solid #cfd8df;
+            border-bottom: 1px solid #cfd8df;
+            padding: 10px 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        #list-panel h3 {
+            margin: 0;
+            font-size: 14px;
+            color: #2c3e50;
+        }
+
+        .list-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        #list-tsv-input {
+            width: 100%;
+            box-sizing: border-box;
+            min-height: 90px;
+            resize: vertical;
+            padding: 8px;
+            border: 1px solid #bdc3c7;
+            border-radius: 4px;
+            font-size: 13px;
+            font-family: monospace;
+        }
+
+        .list-column-input {
+            width: 70px;
+            padding: 6px;
+            border: 1px solid #bdc3c7;
+            border-radius: 4px;
+        }
+
+        .list-status {
+            font-size: 12px;
+            color: #34495e;
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        #list-message {
+            font-size: 12px;
+            color: #2c3e50;
+            min-height: 16px;
+        }
+
+        #list-message.error {
+            color: #c0392b;
+        }
+
+        #list-message.success {
+            color: #27ae60;
+        }
     </style>
 </head>
 
@@ -314,6 +378,30 @@
             <button id="save-key-btn" onclick="saveApiKey()">利用を開始する</button>
         </div>
     </div>
+
+    <section id="list-panel">
+        <h3>一覧処理（TSV貼り付け）</h3>
+        <textarea id="list-tsv-input" placeholder="スプレッドシートからコピーしたデータをここに貼り付け"></textarea>
+
+        <div class="list-row">
+            <label>住所列番号(1始まり): <input type="number" id="address-column-input" class="list-column-input" min="1" value="1"></label>
+            <label>出力列番号(1始まり): <input type="number" id="output-column-input" class="list-column-input" min="1" value="5"></label>
+            <button id="load-list-btn">一覧を読み込む</button>
+            <button id="next-row-btn">次の未処理住所を表示</button>
+            <button id="apply-current-btn">現在の出力文をこの行に反映</button>
+            <button id="apply-next-btn">反映して次へ</button>
+            <button id="copy-updated-tsv-btn">更新済み一覧をコピー</button>
+        </div>
+
+        <div class="list-status">
+            <div>現在対象行: <strong id="current-row-display">-</strong></div>
+            <div>現在対象住所: <strong id="current-address-display">-</strong></div>
+            <div>総件数: <strong id="total-rows-display">0</strong></div>
+            <div>未処理件数: <strong id="pending-rows-display">0</strong></div>
+        </div>
+
+        <div id="list-message"></div>
+    </section>
 
     <div id="controls">
         <div class="control-row-top">
@@ -379,6 +467,12 @@
             document.getElementById('address-input').addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') geocodeAddress();
             });
+
+            document.getElementById('load-list-btn').addEventListener('click', loadTsvList);
+            document.getElementById('next-row-btn').addEventListener('click', showNextPendingAddress);
+            document.getElementById('apply-current-btn').addEventListener('click', applyOutputToCurrentRow);
+            document.getElementById('apply-next-btn').addEventListener('click', applyOutputAndMoveNext);
+            document.getElementById('copy-updated-tsv-btn').addEventListener('click', copyUpdatedTsv);
 
             // Settings menu close handler is in script.js now, but kept safe here
         </script>
