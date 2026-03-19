@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>住所抽出ツール</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+            background: #f4f6f8;
+            color: #2c3e50;
+        }
+
+        .page {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 28px;
+        }
+
+        .card {
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+            padding: 20px;
+            margin-bottom: 18px;
+        }
+
+        .description {
+            line-height: 1.7;
+            font-size: 14px;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 260px;
+            resize: vertical;
+            box-sizing: border-box;
+            padding: 12px;
+            font-size: 13px;
+            line-height: 1.6;
+            border: 1px solid #cfd8df;
+            border-radius: 8px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        }
+
+        .button-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        button,
+        .link-button {
+            padding: 10px 14px;
+            border: none;
+            border-radius: 8px;
+            background: #3498db;
+            color: #fff;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        button:hover,
+        .link-button:hover {
+            background: #2980b9;
+        }
+
+        .secondary {
+            background: #7f8c8d;
+        }
+
+        .secondary:hover {
+            background: #6c7a7d;
+        }
+
+        .success {
+            background: #27ae60;
+        }
+
+        .success:hover {
+            background: #1f8c4d;
+        }
+
+        .result-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .result-box {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .result-box h2 {
+            margin: 0;
+            font-size: 16px;
+        }
+
+        .status {
+            min-height: 22px;
+            font-size: 13px;
+            font-weight: bold;
+            margin-top: 8px;
+        }
+
+        .status.error {
+            color: #c0392b;
+        }
+
+        .status.success {
+            color: #27ae60;
+        }
+
+        .meta {
+            font-size: 13px;
+            color: #52616b;
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        @media (max-width: 768px) {
+            .result-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="page">
+        <div class="header">
+            <div>
+                <h1>住所抽出ツール</h1>
+                <div class="description">CSV住所データベースを貼り付けると、スプレッドシートにそのまま貼り付けられる2列形式で住所を抽出します。</div>
+            </div>
+            <a href="index.html" class="link-button secondary">← 座標取得ツールへ戻る</a>
+        </div>
+
+        <section class="card">
+            <div class="description">
+                入力CSVはヘッダー行付きでも利用できます。抽出ルールは以下のとおりです。<br>
+                1列目: <strong>pref + city + ward(存在時) + oaza_cho + machiaza_typeが2なら chome_number + 「丁目」</strong><br>
+                2列目: <strong>pref + city + ward(存在時)</strong>
+            </div>
+            <textarea id="csv-input" placeholder="lg_code,machiaza_id,machiaza_type,pref,... のCSVをここに貼り付け"></textarea>
+            <div class="button-row">
+                <button id="extract-btn">住所を抽出する</button>
+                <button id="copy-results-btn" class="success">抽出結果をコピー</button>
+                <button id="clear-btn" class="secondary">入力と結果をクリア</button>
+            </div>
+            <div id="status" class="status"></div>
+            <div class="meta">
+                <div>処理行数: <strong id="processed-count">0</strong></div>
+                <div>出力行数: <strong id="output-count">0</strong></div>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="result-grid">
+                <div class="result-box">
+                    <h2>1列目: 詳細住所</h2>
+                    <textarea id="column1-output" readonly placeholder="広島県広島市西区井口1丁目"></textarea>
+                </div>
+                <div class="result-box">
+                    <h2>2列目: 市区町村住所</h2>
+                    <textarea id="column2-output" readonly placeholder="広島県広島市西区"></textarea>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script src="address-tool.js"></script>
+</body>
+
+</html>
