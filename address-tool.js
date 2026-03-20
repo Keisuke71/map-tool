@@ -232,8 +232,8 @@ function resetOutputs() {
     setCounts(0, 0);
 }
 
-function buildAddressEntryKey(detailedAddress, municipalityAddress, chomeColumnValue) {
-    return [detailedAddress, municipalityAddress, chomeColumnValue].join("\u0000");
+function buildAddressEntryKey(detailedAddress, municipalityAddress) {
+    return detailedAddress || municipalityAddress;
 }
 
 function extractAddresses() {
@@ -294,7 +294,7 @@ function extractAddresses() {
                 return;
             }
 
-            const entryKey = buildAddressEntryKey(detailedAddress, municipalityAddress, chomeColumnValue);
+            const entryKey = buildAddressEntryKey(detailedAddress, municipalityAddress);
             if (seenAddressEntries.has(entryKey)) {
                 return;
             }
