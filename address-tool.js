@@ -1,7 +1,9 @@
 const ADDRESS_TOOL_STORAGE_KEY = "addressToolCsvInputV1";
+const MUNICIPALITY_FILTER_STORAGE_KEY = "addressToolMunicipalityFilterV1";
 const EXPECTED_HEADER = ["lg_code", "machiaza_id", "machiaza_type", "pref"];
 
 const csvInput = document.getElementById("csv-input");
+const municipalityFilterInput = document.getElementById("municipality-filter");
 const column1Output = document.getElementById("column1-output");
 const column2Output = document.getElementById("column2-output");
 const statusEl = document.getElementById("status");
@@ -14,6 +16,11 @@ function restoreInput() {
     const saved = localStorage.getItem(ADDRESS_TOOL_STORAGE_KEY);
     if (saved && csvInput) {
         csvInput.value = saved;
+    }
+
+    const savedFilter = localStorage.getItem(MUNICIPALITY_FILTER_STORAGE_KEY);
+    if (savedFilter && municipalityFilterInput) {
+        municipalityFilterInput.value = savedFilter;
     }
 }
 
@@ -29,6 +36,10 @@ function setCounts(processed, output) {
 
 function normalizeValue(value) {
     return value == null ? "" : String(value).trim();
+}
+
+function normalizeMunicipalityName(value) {
+    return normalizeValue(value).replace(/[\s　]+/g, "");
 }
 
 function formatChome(type, chomeNumber) {
@@ -103,9 +114,41 @@ function ensureRequiredColumns(indexMap) {
     }
 }
 
+function buildMunicipalityCandidates(pref, city, ward) {
+    const normalizedPref = normalizeMunicipalityName(pref);
+    const normalizedCity = normalizeMunicipalityName(city);
+    const normalizedWard = normalizeMunicipalityName(ward);
+    const candidates = new Set();
+
+    if (normalizedCity) {
+        candidates.add(normalizedCity);
+    }
+    if (normalizedCity && normalizedWard) {
+        candidates.add(`${normalizedCity}${normalizedWard}`);
+    }
+    if (normalizedPref && normalizedCity) {
+        candidates.add(`${normalizedPref}${normalizedCity}`);
+    }
+    if (normalizedPref && normalizedCity && normalizedWard) {
+        candidates.add(`${normalizedPref}${normalizedCity}${normalizedWard}`);
+    }
+
+    return candidates;
+}
+
+function matchesMunicipalityFilter(filterValue, pref, city, ward) {
+    const normalizedFilter = normalizeMunicipalityName(filterValue);
+    if (!normalizedFilter) return true;
+
+    const candidates = buildMunicipalityCandidates(pref, city, ward);
+    return candidates.has(normalizedFilter);
+}
+
 function extractAddresses() {
     const rawText = csvInput.value.trim();
+    const municipalityFilter = normalizeValue(municipalityFilterInput.value);
     localStorage.setItem(ADDRESS_TOOL_STORAGE_KEY, csvInput.value);
+    localStorage.setItem(MUNICIPALITY_FILTER_STORAGE_KEY, municipalityFilter);
 
     if (!rawText) {
         column1Output.value = "";
@@ -126,10 +169,16 @@ function extractAddresses() {
         ensureRequiredColumns(indexMap);
 
         const dataRows = maybeRemoveHeader(parsedRows);
+        const filteredRows = dataRows.filter((row) => matchesMunicipalityFilter(
+            municipalityFilter,
+            row[indexMap.pref],
+            row[indexMap.city],
+            row[indexMap.ward]
+        ));
         const detailed = [];
         const cityLevel = [];
 
-        dataRows.forEach((row) => {
+        filteredRows.forEach((row) => {
             const pref = normalizeValue(row[indexMap.pref]);
             const city = normalizeValue(row[indexMap.city]);
             const ward = normalizeValue(row[indexMap.ward]);
@@ -148,8 +197,13 @@ function extractAddresses() {
 
         column1Output.value = detailed.join("\n");
         column2Output.value = cityLevel.join("\n");
-        setCounts(dataRows.length, detailed.length);
-        setStatus(`住所を抽出しました（${detailed.length}件）。`, "success");
+        setCounts(filteredRows.length, detailed.length);
+        setStatus(
+            municipalityFilter
+                ? `「${municipalityFilter}」に一致する住所を抽出しました（${detailed.length}件）。`
+                : `住所を抽出しました（${detailed.length}件）。`,
+            "success"
+        );
     } catch (error) {
         column1Output.value = "";
         column2Output.value = "";
@@ -181,9 +235,11 @@ function copyResults() {
 
 function clearAll() {
     csvInput.value = "";
+    municipalityFilterInput.value = "";
     column1Output.value = "";
     column2Output.value = "";
     localStorage.removeItem(ADDRESS_TOOL_STORAGE_KEY);
+    localStorage.removeItem(MUNICIPALITY_FILTER_STORAGE_KEY);
     setCounts(0, 0);
     setStatus("入力と結果をクリアしました。", "success");
 }

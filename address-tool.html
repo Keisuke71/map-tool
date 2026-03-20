@@ -46,10 +46,9 @@
             font-size: 14px;
         }
 
-        textarea {
+        textarea,
+        input[type="text"] {
             width: 100%;
-            min-height: 260px;
-            resize: vertical;
             box-sizing: border-box;
             padding: 12px;
             font-size: 13px;
@@ -57,6 +56,11 @@
             border: 1px solid #cfd8df;
             border-radius: 8px;
             font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        }
+
+        textarea {
+            min-height: 260px;
+            resize: vertical;
         }
 
         .button-row {
@@ -165,7 +169,12 @@
             <div class="description">
                 入力CSVはヘッダー行付きでも利用できます。抽出ルールは以下のとおりです。<br>
                 1列目: <strong>pref + city + ward(存在時) + oaza_cho + machiaza_typeが2なら chome_number + 「丁目」</strong><br>
-                2列目: <strong>pref + city + ward(存在時)</strong>
+                2列目: <strong>pref + city + ward(存在時)</strong><br>
+                市町村を指定すると、その市町村に一致する行だけ抽出します。政令指定都市は <strong>京都市</strong> のように市名だけで、その市に属するすべての区をまとめて抽出できます。
+            </div>
+            <div class="result-box" style="margin: 14px 0 10px;">
+                <label for="municipality-filter"><strong>抽出対象の市町村名（任意）</strong></label>
+                <input id="municipality-filter" type="text" placeholder="例: 京都市 / 京都市中京区 / 横浜市 / 札幌市中央区">
             </div>
             <textarea id="csv-input" placeholder="lg_code,machiaza_id,machiaza_type,pref,... のCSVをここに貼り付け"></textarea>
             <div class="button-row">
