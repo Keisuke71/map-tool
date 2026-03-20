@@ -1,6 +1,5 @@
 const ADDRESS_TOOL_STORAGE_KEY = "addressToolCsvInputV1";
 const MUNICIPALITY_FILTER_STORAGE_KEY = "addressToolMunicipalityFilterV1";
-const EXPECTED_HEADER = ["lg_code", "machiaza_id", "machiaza_type", "pref"];
 const REQUIRED_COLUMNS = ["pref", "city", "ward", "oaza_cho", "machiaza_type", "chome_number"];
 
 const csvInput = document.getElementById("csv-input");
@@ -108,16 +107,6 @@ function parseCsv(text) {
     return rows.filter((currentRow) => currentRow.some((value) => normalizeValue(value) !== ""));
 }
 
-function maybeRemoveHeader(rows) {
-    if (!rows.length) {
-        return rows;
-    }
-
-    const firstRow = rows[0].map(normalizeValue);
-    const isExpectedHeader = EXPECTED_HEADER.every((value, index) => firstRow[index] === value);
-    return isExpectedHeader ? rows.slice(1) : rows;
-}
-
 function buildColumnIndexMap(headerRow) {
     return headerRow.reduce((indexMap, name, index) => {
         indexMap[normalizeValue(name)] = index;
@@ -173,6 +162,7 @@ function getFilterValue() {
 function resetOutputs() {
     column1Output.value = "";
     column2Output.value = "";
+    column3Output.value = "";
     setCounts(0, 0);
 }
 
@@ -199,7 +189,8 @@ function extractAddresses() {
         const indexMap = buildColumnIndexMap(headerRow);
         ensureRequiredColumns(indexMap);
 
-        const filteredRows = maybeRemoveHeader(parsedRows).filter((row) => matchesMunicipalityFilter(
+        const dataRows = parsedRows.slice(1);
+        const filteredRows = dataRows.filter((row) => matchesMunicipalityFilter(
             municipalityFilter,
             row[indexMap.pref],
             row[indexMap.city],
@@ -208,6 +199,7 @@ function extractAddresses() {
 
         const detailedAddresses = [];
         const municipalityAddresses = [];
+        const chomeColumnValues = [];
 
         filteredRows.forEach((row) => {
             const pref = normalizeValue(row[indexMap.pref]);
@@ -232,10 +224,12 @@ function extractAddresses() {
 
             detailedAddresses.push(detailedAddress);
             municipalityAddresses.push(municipalityAddress);
+            chomeColumnValues.push(formatChomeColumn(machiazaType));
         });
 
         column1Output.value = detailedAddresses.join("\n");
         column2Output.value = municipalityAddresses.join("\n");
+        column3Output.value = chomeColumnValues.join("\n");
         setCounts(filteredRows.length, detailedAddresses.length);
         setStatus(
             municipalityFilter
@@ -260,19 +254,24 @@ function copyText(text, successMessage) {
 function copyResults() {
     const detailedLines = column1Output.value;
     const municipalityLines = column2Output.value;
+    const chomeLines = column3Output.value;
 
-    if (!detailedLines && !municipalityLines) {
+    if (!detailedLines && !municipalityLines && !chomeLines) {
         setStatus("先に住所を抽出してください。", "error");
         return;
     }
 
     const detailedColumns = detailedLines.split("\n");
     const municipalityColumns = municipalityLines.split("\n");
-    const maxLength = Math.max(detailedColumns.length, municipalityColumns.length);
+    const chomeColumns = chomeLines.split("\n");
+    const maxLength = Math.max(detailedColumns.length, municipalityColumns.length, chomeColumns.length);
     const tsv = Array.from(
         { length: maxLength },
-        (_, index) => `${detailedColumns[index] || ""}\t${municipalityColumns[index] || ""}`
+        (_, index) => `${detailedColumns[index] || ""}\t${municipalityColumns[index] || ""}\t${chomeColumns[index] || ""}`
     ).join("\n");
+
+    copyText(tsv, "抽出結果をコピーしました。");
+}
 
 function copyColumn(outputEl, columnLabel) {
     const text = outputEl.value;
