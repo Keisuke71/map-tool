@@ -105,7 +105,7 @@
 
         .result-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 16px;
         }
 
@@ -113,6 +113,10 @@
             display: flex;
             flex-direction: column;
             gap: 10px;
+        }
+
+        .result-box button {
+            align-self: flex-start;
         }
 
         .result-box h2 {
@@ -156,7 +160,7 @@
         <div class="header">
             <div>
                 <h1>住所抽出ツール</h1>
-                <div class="description">CSV住所データベースを貼り付けると、スプレッドシートにそのまま貼り付けられる2列形式で住所を抽出します。</div>
+                <div class="description">CSV住所データベースを貼り付けると、スプレッドシートにそのまま貼り付けられる3列形式で住所を抽出します。</div>
             </div>
             <a href="index.html" class="link-button secondary">← 座標取得ツールへ戻る</a>
         </div>
@@ -165,7 +169,8 @@
             <div class="description">
                 入力CSVはヘッダー行付きでも利用できます。抽出ルールは以下のとおりです。<br>
                 1列目: <strong>pref + city + ward(存在時) + oaza_cho + machiaza_typeが2なら chome_number + 「丁目」</strong><br>
-                2列目: <strong>pref + city + ward(存在時)</strong>
+                2列目: <strong>pref + city + ward(存在時)</strong><br>
+                3列目: <strong>machiaza_typeが1なら chome_number + 「丁目」、machiaza_typeが2なら空欄</strong>
             </div>
             <textarea id="csv-input" placeholder="lg_code,machiaza_id,machiaza_type,pref,... のCSVをここに貼り付け"></textarea>
             <div class="button-row">
@@ -185,10 +190,17 @@
                 <div class="result-box">
                     <h2>1列目: 詳細住所</h2>
                     <textarea id="column1-output" readonly placeholder="広島県広島市西区井口1丁目"></textarea>
+                    <button id="copy-column1-btn" class="success">1列目をコピー</button>
                 </div>
                 <div class="result-box">
                     <h2>2列目: 市区町村住所</h2>
                     <textarea id="column2-output" readonly placeholder="広島県広島市西区"></textarea>
+                    <button id="copy-column2-btn" class="success">2列目をコピー</button>
+                </div>
+                <div class="result-box">
+                    <h2>3列目: 丁目</h2>
+                    <textarea id="column3-output" readonly placeholder="1丁目"></textarea>
+                    <button id="copy-column3-btn" class="success">3列目をコピー</button>
                 </div>
             </div>
         </section>
