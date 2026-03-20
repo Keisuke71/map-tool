@@ -146,7 +146,7 @@ function matchesMunicipalityFilter(filterValue, pref, city, ward) {
 
 function extractAddresses() {
     const rawText = csvInput.value.trim();
-    const municipalityFilter = normalizeValue(municipalityFilterInput.value);
+    const municipalityFilter = normalizeValue(municipalityFilterInput ? municipalityFilterInput.value : "");
     localStorage.setItem(ADDRESS_TOOL_STORAGE_KEY, csvInput.value);
     localStorage.setItem(MUNICIPALITY_FILTER_STORAGE_KEY, municipalityFilter);
 
@@ -235,7 +235,7 @@ function copyResults() {
 
 function clearAll() {
     csvInput.value = "";
-    municipalityFilterInput.value = "";
+    if (municipalityFilterInput) municipalityFilterInput.value = "";
     column1Output.value = "";
     column2Output.value = "";
     localStorage.removeItem(ADDRESS_TOOL_STORAGE_KEY);
