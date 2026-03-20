@@ -4,6 +4,7 @@ const EXPECTED_HEADER = ["lg_code", "machiaza_id", "machiaza_type", "pref"];
 const csvInput = document.getElementById("csv-input");
 const column1Output = document.getElementById("column1-output");
 const column2Output = document.getElementById("column2-output");
+const column3Output = document.getElementById("column3-output");
 const statusEl = document.getElementById("status");
 const processedCountEl = document.getElementById("processed-count");
 const outputCountEl = document.getElementById("output-count");
@@ -36,6 +37,10 @@ function formatChome(type, chomeNumber) {
     const normalized = normalizeValue(chomeNumber);
     if (!normalized) return "";
     return `${normalized}丁目`;
+}
+
+function formatChomeColumn(type) {
+    return normalizeValue(type) === "1" ? "丁目" : "";
 }
 
 function joinAddressParts(parts) {
@@ -110,6 +115,7 @@ function extractAddresses() {
     if (!rawText) {
         column1Output.value = "";
         column2Output.value = "";
+        column3Output.value = "";
         setCounts(0, 0);
         setStatus("CSVを貼り付けてください。", "error");
         return;
@@ -128,6 +134,7 @@ function extractAddresses() {
         const dataRows = maybeRemoveHeader(parsedRows);
         const detailed = [];
         const cityLevel = [];
+        const chomeColumn = [];
 
         dataRows.forEach((row) => {
             const pref = normalizeValue(row[indexMap.pref]);
@@ -139,50 +146,75 @@ function extractAddresses() {
 
             const cityAddress = joinAddressParts([pref, city, ward]);
             const detailedAddress = joinAddressParts([pref, city, ward, oazaCho, formatChome(machiazaType, chomeNumber)]);
+            const chomeValue = formatChomeColumn(machiazaType);
 
             if (!cityAddress && !detailedAddress) return;
 
             detailed.push(detailedAddress);
             cityLevel.push(cityAddress);
+            chomeColumn.push(chomeValue);
         });
 
         column1Output.value = detailed.join("\n");
         column2Output.value = cityLevel.join("\n");
+        column3Output.value = chomeColumn.join("\n");
         setCounts(dataRows.length, detailed.length);
         setStatus(`住所を抽出しました（${detailed.length}件）。`, "success");
     } catch (error) {
         column1Output.value = "";
         column2Output.value = "";
+        column3Output.value = "";
         setCounts(0, 0);
         setStatus(error.message || "抽出に失敗しました。", "error");
     }
 }
 
+function copyText(text, successMessage) {
+    navigator.clipboard.writeText(text).then(() => {
+        setStatus(successMessage, "success");
+    }).catch(() => {
+        setStatus("コピーに失敗しました。", "error");
+    });
+}
+
 function copyResults() {
     const lines1 = column1Output.value;
     const lines2 = column2Output.value;
+    const lines3 = column3Output.value;
 
-    if (!lines1 && !lines2) {
+    if (!lines1 && !lines2 && !lines3) {
         setStatus("先に住所を抽出してください。", "error");
         return;
     }
 
     const col1 = lines1.split("\n");
     const col2 = lines2.split("\n");
-    const maxLength = Math.max(col1.length, col2.length);
-    const tsv = Array.from({ length: maxLength }, (_, index) => `${col1[index] || ""}\t${col2[index] || ""}`).join("\n");
+    const col3 = lines3.split("\n");
+    const maxLength = Math.max(col1.length, col2.length, col3.length);
+    const tsv = Array.from(
+        { length: maxLength },
+        (_, index) => `${col1[index] || ""}\t${col2[index] || ""}\t${col3[index] || ""}`
+    ).join("\n");
 
-    navigator.clipboard.writeText(tsv).then(() => {
-        setStatus("抽出結果をスプレッドシート貼り付け用にコピーしました。", "success");
-    }).catch(() => {
-        setStatus("コピーに失敗しました。", "error");
-    });
+    copyText(tsv, "抽出結果をスプレッドシート貼り付け用にコピーしました。");
+}
+
+function copyColumn(outputEl, columnLabel) {
+    const text = outputEl.value;
+
+    if (!text) {
+        setStatus(`${columnLabel}にコピーする内容がありません。`, "error");
+        return;
+    }
+
+    copyText(text, `${columnLabel}をコピーしました。`);
 }
 
 function clearAll() {
     csvInput.value = "";
     column1Output.value = "";
     column2Output.value = "";
+    column3Output.value = "";
     localStorage.removeItem(ADDRESS_TOOL_STORAGE_KEY);
     setCounts(0, 0);
     setStatus("入力と結果をクリアしました。", "success");
@@ -190,6 +222,9 @@ function clearAll() {
 
 document.getElementById("extract-btn").addEventListener("click", extractAddresses);
 document.getElementById("copy-results-btn").addEventListener("click", copyResults);
+document.getElementById("copy-column1-btn").addEventListener("click", () => copyColumn(column1Output, "1列目"));
+document.getElementById("copy-column2-btn").addEventListener("click", () => copyColumn(column2Output, "2列目"));
+document.getElementById("copy-column3-btn").addEventListener("click", () => copyColumn(column3Output, "3列目"));
 document.getElementById("clear-btn").addEventListener("click", clearAll);
 
 document.addEventListener("DOMContentLoaded", restoreInput);
