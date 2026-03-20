@@ -1,6 +1,7 @@
 const ADDRESS_TOOL_STORAGE_KEY = "addressToolCsvInputV1";
 const MUNICIPALITY_FILTER_STORAGE_KEY = "addressToolMunicipalityFilterV1";
 const REQUIRED_COLUMNS = ["pref", "city", "ward", "oaza_cho", "machiaza_type", "chome_number"];
+const MAX_PERSISTED_CSV_LENGTH = 150000;
 
 const csvInput = document.getElementById("csv-input");
 const municipalityFilterInput = document.getElementById("municipality-filter");
@@ -29,9 +30,74 @@ function setCounts(processed, output) {
     outputCountEl.textContent = String(output);
 }
 
+function getStoredValue(key) {
+    try {
+        return localStorage.getItem(key);
+    } catch (_error) {
+        return null;
+    }
+}
+
+function removeStoredValue(key) {
+    try {
+        localStorage.removeItem(key);
+    } catch (_error) {
+        // 何もしない
+    }
+}
+
+function isQuotaExceededError(error) {
+    return error instanceof DOMException && (
+        error.name === "QuotaExceededError" ||
+        error.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+        error.code === 22 ||
+        error.code === 1014
+    );
+}
+
+function persistCsvInput(rawCsv) {
+    if (!rawCsv) {
+        removeStoredValue(ADDRESS_TOOL_STORAGE_KEY);
+        return "";
+    }
+
+    if (rawCsv.length > MAX_PERSISTED_CSV_LENGTH) {
+        removeStoredValue(ADDRESS_TOOL_STORAGE_KEY);
+        return "CSVが大きいため入力内容の自動保存をスキップしました。";
+    }
+
+    try {
+        localStorage.setItem(ADDRESS_TOOL_STORAGE_KEY, rawCsv);
+        return "";
+    } catch (error) {
+        if (isQuotaExceededError(error)) {
+            removeStoredValue(ADDRESS_TOOL_STORAGE_KEY);
+            return "ブラウザ保存領域が不足しているため入力内容の自動保存をスキップしました。";
+        }
+        throw error;
+    }
+}
+
+function persistMunicipalityFilter(filterValue) {
+    if (!filterValue) {
+        removeStoredValue(MUNICIPALITY_FILTER_STORAGE_KEY);
+        return;
+    }
+
+    try {
+        localStorage.setItem(MUNICIPALITY_FILTER_STORAGE_KEY, filterValue);
+    } catch (_error) {
+        // フィルター保存に失敗しても抽出処理は継続する
+    }
+}
+
+function appendStorageNotice(message, notice) {
+    return notice ? `${message} ${notice}` : message;
+}
+
 function restoreInput() {
-    const savedCsv = localStorage.getItem(ADDRESS_TOOL_STORAGE_KEY);
-    const savedFilter = localStorage.getItem(MUNICIPALITY_FILTER_STORAGE_KEY);
+    const savedCsv = getStoredValue(ADDRESS_TOOL_STORAGE_KEY);
+    const savedFilter = getStoredValue(MUNICIPALITY_FILTER_STORAGE_KEY);
 
     if (savedCsv && csvInput) {
         csvInput.value = savedCsv;
@@ -169,13 +235,13 @@ function resetOutputs() {
 function extractAddresses() {
     const rawText = normalizeValue(csvInput.value);
     const municipalityFilter = getFilterValue();
+    const storageNotice = persistCsvInput(csvInput.value);
 
-    localStorage.setItem(ADDRESS_TOOL_STORAGE_KEY, csvInput.value);
-    localStorage.setItem(MUNICIPALITY_FILTER_STORAGE_KEY, municipalityFilter);
+    persistMunicipalityFilter(municipalityFilter);
 
     if (!rawText) {
         resetOutputs();
-        setStatus("CSVを貼り付けてください。", "error");
+        setStatus(appendStorageNotice("CSVを貼り付けてください。", storageNotice), "error");
         return;
     }
 
@@ -232,14 +298,17 @@ function extractAddresses() {
         column3Output.value = chomeColumnValues.join("\n");
         setCounts(filteredRows.length, detailedAddresses.length);
         setStatus(
-            municipalityFilter
-                ? `「${municipalityFilter}」に一致する住所を抽出しました（${detailedAddresses.length}件）。`
-                : `住所を抽出しました（${detailedAddresses.length}件）。`,
+            appendStorageNotice(
+                municipalityFilter
+                    ? `「${municipalityFilter}」に一致する住所を抽出しました（${detailedAddresses.length}件）。`
+                    : `住所を抽出しました（${detailedAddresses.length}件）。`,
+                storageNotice
+            ),
             "success"
         );
     } catch (error) {
         resetOutputs();
-        setStatus(error.message || "抽出に失敗しました。", "error");
+        setStatus(appendStorageNotice(error.message || "抽出に失敗しました。", storageNotice), "error");
     }
 }
 
@@ -291,8 +360,8 @@ function clearAll() {
     }
 
     resetOutputs();
-    localStorage.removeItem(ADDRESS_TOOL_STORAGE_KEY);
-    localStorage.removeItem(MUNICIPALITY_FILTER_STORAGE_KEY);
+    removeStoredValue(ADDRESS_TOOL_STORAGE_KEY);
+    removeStoredValue(MUNICIPALITY_FILTER_STORAGE_KEY);
     setStatus("入力と結果をクリアしました。", "success");
 }
 
