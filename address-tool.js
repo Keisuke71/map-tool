@@ -7,6 +7,7 @@ const csvInput = document.getElementById("csv-input");
 const municipalityFilterInput = document.getElementById("municipality-filter");
 const column1Output = document.getElementById("column1-output");
 const column2Output = document.getElementById("column2-output");
+const column3Output = document.getElementById("column3-output");
 const statusEl = document.getElementById("status");
 const processedCountEl = document.getElementById("processed-count");
 const outputCountEl = document.getElementById("output-count");
@@ -49,6 +50,10 @@ function formatChome(type, chomeNumber) {
 
     const normalizedChomeNumber = normalizeValue(chomeNumber);
     return normalizedChomeNumber ? `${normalizedChomeNumber}丁目` : "";
+}
+
+function formatChomeColumn(type) {
+    return normalizeValue(type) === "1" ? "丁目" : "";
 }
 
 function joinAddressParts(parts) {
@@ -244,6 +249,14 @@ function extractAddresses() {
     }
 }
 
+function copyText(text, successMessage) {
+    navigator.clipboard.writeText(text).then(() => {
+        setStatus(successMessage, "success");
+    }).catch(() => {
+        setStatus("コピーに失敗しました。", "error");
+    });
+}
+
 function copyResults() {
     const detailedLines = column1Output.value;
     const municipalityLines = column2Output.value;
@@ -261,11 +274,15 @@ function copyResults() {
         (_, index) => `${detailedColumns[index] || ""}\t${municipalityColumns[index] || ""}`
     ).join("\n");
 
-    navigator.clipboard.writeText(tsv).then(() => {
-        setStatus("抽出結果をスプレッドシート貼り付け用にコピーしました。", "success");
-    }).catch(() => {
-        setStatus("コピーに失敗しました。", "error");
-    });
+function copyColumn(outputEl, columnLabel) {
+    const text = outputEl.value;
+
+    if (!text) {
+        setStatus(`${columnLabel}にコピーする内容がありません。`, "error");
+        return;
+    }
+
+    copyText(text, `${columnLabel}をコピーしました。`);
 }
 
 function clearAll() {
@@ -282,5 +299,8 @@ function clearAll() {
 
 document.getElementById("extract-btn").addEventListener("click", extractAddresses);
 document.getElementById("copy-results-btn").addEventListener("click", copyResults);
+document.getElementById("copy-column1-btn").addEventListener("click", () => copyColumn(column1Output, "1列目"));
+document.getElementById("copy-column2-btn").addEventListener("click", () => copyColumn(column2Output, "2列目"));
+document.getElementById("copy-column3-btn").addEventListener("click", () => copyColumn(column3Output, "3列目"));
 document.getElementById("clear-btn").addEventListener("click", clearAll);
 document.addEventListener("DOMContentLoaded", restoreInput);
