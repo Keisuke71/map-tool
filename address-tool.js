@@ -232,6 +232,10 @@ function resetOutputs() {
     setCounts(0, 0);
 }
 
+function buildAddressEntryKey(detailedAddress, municipalityAddress) {
+    return detailedAddress || municipalityAddress;
+}
+
 function extractAddresses() {
     const rawText = normalizeValue(csvInput.value);
     const municipalityFilter = getFilterValue();
@@ -266,6 +270,7 @@ function extractAddresses() {
         const detailedAddresses = [];
         const municipalityAddresses = [];
         const chomeColumnValues = [];
+        const seenAddressEntries = new Set();
 
         filteredRows.forEach((row) => {
             const pref = normalizeValue(row[indexMap.pref]);
@@ -283,14 +288,21 @@ function extractAddresses() {
                 oazaCho,
                 formatChome(machiazaType, chomeNumber)
             ]);
+            const chomeColumnValue = formatChomeColumn(machiazaType);
 
             if (!municipalityAddress && !detailedAddress) {
                 return;
             }
 
+            const entryKey = buildAddressEntryKey(detailedAddress, municipalityAddress);
+            if (seenAddressEntries.has(entryKey)) {
+                return;
+            }
+
+            seenAddressEntries.add(entryKey);
             detailedAddresses.push(detailedAddress);
             municipalityAddresses.push(municipalityAddress);
-            chomeColumnValues.push(formatChomeColumn(machiazaType));
+            chomeColumnValues.push(chomeColumnValue);
         });
 
         column1Output.value = detailedAddresses.join("\n");
