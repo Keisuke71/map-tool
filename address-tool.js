@@ -39,11 +39,8 @@ function formatChome(type, chomeNumber) {
     return `${normalized}丁目`;
 }
 
-function formatChomeColumn(type, chomeNumber) {
-    if (normalizeValue(type) !== "1") return "";
-    const normalized = normalizeValue(chomeNumber);
-    if (!normalized) return "";
-    return `${normalized}丁目`;
+function formatChomeColumn(type) {
+    return normalizeValue(type) === "1" ? "丁目" : "";
 }
 
 function joinAddressParts(parts) {
@@ -149,7 +146,7 @@ function extractAddresses() {
 
             const cityAddress = joinAddressParts([pref, city, ward]);
             const detailedAddress = joinAddressParts([pref, city, ward, oazaCho, formatChome(machiazaType, chomeNumber)]);
-            const chomeValue = formatChomeColumn(machiazaType, chomeNumber);
+            const chomeValue = formatChomeColumn(machiazaType);
 
             if (!cityAddress && !detailedAddress) return;
 
