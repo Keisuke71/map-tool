@@ -9,6 +9,7 @@ const STORAGE_KEY_ADDRESS_COL = "mapToolAddressColumnV1";
 const STORAGE_KEY_OUTPUT_COL = "mapToolOutputColumnV1";
 const STORAGE_KEY_CURRENT_ROW = "mapToolCurrentRowIndexV1";
 const STORAGE_KEY_LIST_MODE_ENABLED = "mapToolListModeEnabledV1";
+const STORAGE_KEY_SIDEBAR_WIDTH = "mapToolSidebarWidthV1";
 
 
 let apiKey = localStorage.getItem(STORAGE_KEY_API);
@@ -23,6 +24,7 @@ let outputColumnIndex = Number(localStorage.getItem(STORAGE_KEY_OUTPUT_COL)) || 
 let currentListRowIndex = Number(localStorage.getItem(STORAGE_KEY_CURRENT_ROW));
 if (!Number.isInteger(currentListRowIndex) || currentListRowIndex < 0) currentListRowIndex = -1;
 let isListModeEnabled = localStorage.getItem(STORAGE_KEY_LIST_MODE_ENABLED) !== "false";
+let sidebarWidth = Number(localStorage.getItem(STORAGE_KEY_SIDEBAR_WIDTH)) || 280;
 
 
 // ★設定: 回数制限の目安
@@ -92,10 +94,12 @@ const QuotaManager = {
    ========================================= */
 document.addEventListener("DOMContentLoaded", () => {
     applySavedLayout();
+    applySavedSidebarWidth();
     QuotaManager.updateDisplay();
     updateAutoRadiusDisplay();
     restoreListState();
     applyListModeVisibility();
+    initializeSidebarResize();
 
     if (apiKey) {
         QuotaManager.increment();
@@ -149,6 +153,49 @@ function updateAutoRadiusDisplay() {
         el.innerText = isAutoRadiusEnabled ? "ON" : "OFF";
         el.style.color = isAutoRadiusEnabled ? "#27ae60" : "#c0392b";
     }
+}
+
+function applySavedSidebarWidth() {
+    const clampedWidth = Math.min(Math.max(sidebarWidth, 220), Math.floor(window.innerWidth * 0.48) || 520);
+    sidebarWidth = clampedWidth;
+    document.documentElement.style.setProperty("--sidebar-width", `${clampedWidth}px`);
+}
+
+function initializeSidebarResize() {
+    const sidebar = document.getElementById("list-sidebar");
+    const resizer = document.getElementById("list-sidebar-resizer");
+    if (!sidebar || !resizer) return;
+
+    let startX = 0;
+    let startWidth = sidebarWidth;
+
+    const onPointerMove = (event) => {
+        const maxWidth = Math.max(220, Math.floor(window.innerWidth * 0.48));
+        const nextWidth = Math.min(Math.max(startWidth + (event.clientX - startX), 220), maxWidth);
+        sidebarWidth = nextWidth;
+        document.documentElement.style.setProperty("--sidebar-width", `${nextWidth}px`);
+    };
+
+    const onPointerUp = () => {
+        sidebar.classList.remove("is-resizing");
+        localStorage.setItem(STORAGE_KEY_SIDEBAR_WIDTH, String(sidebarWidth));
+        document.removeEventListener("pointermove", onPointerMove);
+        document.removeEventListener("pointerup", onPointerUp);
+        setTimeout(() => { if (map) google.maps.event.trigger(map, "resize"); }, 100);
+    };
+
+    resizer.addEventListener("pointerdown", (event) => {
+        if (window.innerWidth <= 960) return;
+        startX = event.clientX;
+        startWidth = sidebarWidth;
+        sidebar.classList.add("is-resizing");
+        document.addEventListener("pointermove", onPointerMove);
+        document.addEventListener("pointerup", onPointerUp);
+    });
+
+    window.addEventListener("resize", () => {
+        applySavedSidebarWidth();
+    });
 }
 
 function loadGoogleMapsScript(key) {
@@ -417,9 +464,11 @@ function copyToClipboard(triggerBtn) {
     navigator.clipboard.writeText(copyText.value).then(() => {
         if (btn.dataset.timer) clearTimeout(btn.dataset.timer);
 
-        const originalText = "コピー";
-        // ボタンIDで色を分岐
-        const originalBg = (btn.id === "header-copy-btn") ? "#e67e22" : "#e74c3c";
+        const originalText = btn.dataset.originalText || btn.innerText;
+        const originalBg = btn.dataset.originalBg || window.getComputedStyle(btn).backgroundColor;
+
+        btn.dataset.originalText = originalText;
+        btn.dataset.originalBg = originalBg;
 
         btn.innerText = "完了!";
         btn.style.backgroundColor = "#27ae60";
@@ -461,8 +510,12 @@ window.deleteApiKey = resetApiKey;
 
 function applyListModeVisibility() {
     const panel = document.getElementById("list-panel");
+    const sidebar = document.getElementById("list-sidebar");
     const toggle = document.getElementById("list-mode-toggle");
+    const actions = document.getElementById("list-actions");
     if (panel) panel.classList.toggle("hidden", !isListModeEnabled);
+    if (sidebar) sidebar.classList.toggle("list-mode-off", !isListModeEnabled);
+    if (actions) actions.classList.toggle("hidden", !isListModeEnabled);
     if (toggle) toggle.checked = isListModeEnabled;
 }
 
@@ -470,6 +523,7 @@ function setListModeEnabled(enabled) {
     isListModeEnabled = Boolean(enabled);
     localStorage.setItem(STORAGE_KEY_LIST_MODE_ENABLED, String(isListModeEnabled));
     applyListModeVisibility();
+    setTimeout(() => { if (map) google.maps.event.trigger(map, "resize"); }, 100);
 }
 
 function parseTsvToRows(tsvText) {
