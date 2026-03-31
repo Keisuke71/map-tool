@@ -1133,9 +1133,9 @@
                         <div id="list-actions" class="control-actions">
                             <button id="load-list-btn">一覧を読み込む</button>
                             <button id="next-row-btn" class="toolbar-btn">次の未処理住所を表示</button>
+                            <button id="prev-row-btn" class="toolbar-btn">1行戻る</button>
                             <button id="apply-current-btn" class="toolbar-btn">現在の出力文を反映</button>
                             <button id="apply-next-btn">反映して次へ</button>
-                            <button id="copy-updated-tsv-btn" class="toolbar-btn">更新済み一覧をコピー</button>
                             <button id="copy-output-column-btn" class="toolbar-btn">出力列のみコピー</button>
                         </div>
                     </div>
@@ -1174,9 +1174,9 @@
 
         document.getElementById('load-list-btn').addEventListener('click', loadTsvList);
         document.getElementById('next-row-btn').addEventListener('click', showNextPendingAddress);
+        document.getElementById('prev-row-btn').addEventListener('click', showPreviousAddressRow);
         document.getElementById('apply-current-btn').addEventListener('click', applyOutputToCurrentRow);
         document.getElementById('apply-next-btn').addEventListener('click', applyOutputAndMoveNext);
-        document.getElementById('copy-updated-tsv-btn').addEventListener('click', copyUpdatedTsv);
         document.getElementById('copy-output-column-btn').addEventListener('click', copyOutputColumnOnly);
         document.getElementById('list-mode-toggle').addEventListener('change', (event) => {
             setListModeEnabled(event.target.checked);
