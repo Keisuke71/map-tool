@@ -648,11 +648,30 @@ function findNextPendingRow(startIndex) {
     return -1;
 }
 
+function findPreviousAddressRow(startIndex) {
+    for (let i = Math.min(startIndex, listData.length - 1); i >= 0; i--) {
+        if (getCellValue(listData[i], addressColumnIndex)) return i;
+    }
+    return -1;
+}
+
 function setAddressToMainInput(address) {
     const input = document.getElementById("address-input");
     if (!input) return;
     input.value = address;
     if (geocoder) geocodeAddress();
+}
+
+function showListRow(rowIndex, message) {
+    if (rowIndex < 0 || !listData[rowIndex]) return false;
+
+    currentListRowIndex = rowIndex;
+    const address = getCellValue(listData[rowIndex], addressColumnIndex);
+    setAddressToMainInput(address);
+    updateListStatus();
+    persistListState();
+    setListMessage(message || `行${rowIndex + 1}の住所をセットしました。`, "success");
+    return true;
 }
 
 function showNextPendingAddress() {
@@ -672,12 +691,24 @@ function showNextPendingAddress() {
         return;
     }
 
-    currentListRowIndex = nextIndex;
-    const address = getCellValue(listData[nextIndex], addressColumnIndex);
-    setAddressToMainInput(address);
-    updateListStatus();
-    persistListState();
-    setListMessage(`行${nextIndex + 1}の住所をセットしました。`, "success");
+    showListRow(nextIndex);
+}
+
+function showPreviousAddressRow() {
+    if (!listData.length) {
+        setListMessage("先に一覧を読み込んでください。", "error");
+        return;
+    }
+
+    const start = currentListRowIndex >= 0 ? currentListRowIndex - 1 : listData.length - 1;
+    const previousIndex = findPreviousAddressRow(start);
+
+    if (previousIndex === -1) {
+        setListMessage("これ以上戻れる住所行はありません。", "error");
+        return;
+    }
+
+    showListRow(previousIndex, `行${previousIndex + 1}に戻りました。必要に応じて編集して再反映してください。`);
 }
 
 function ensureRowLength(row, length) {
@@ -714,21 +745,6 @@ function applyOutputAndMoveNext() {
     const applied = applyOutputToCurrentRow();
     if (!applied) return;
     showNextPendingAddress();
-}
-
-function copyUpdatedTsv() {
-    if (!listData.length) {
-        setListMessage("コピーできる一覧データがありません。", "error");
-        return;
-    }
-
-    const tsv = rowsToTsv(listData);
-    navigator.clipboard.writeText(tsv).then(() => {
-        setListMessage("更新済み一覧をコピーしました。", "success");
-    }).catch((error) => {
-        console.error("TSVコピー失敗", error);
-        setListMessage("コピーに失敗しました。", "error");
-    });
 }
 
 function copyOutputColumnOnly() {
