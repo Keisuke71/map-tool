@@ -672,6 +672,128 @@
             background: rgba(30, 127, 114, 0.1);
         }
 
+        .menu-section {
+            margin: 4px 0;
+            padding: 12px;
+            border-radius: 14px;
+            background: rgba(30, 127, 114, 0.06);
+            border: 1px solid rgba(30, 127, 114, 0.12);
+        }
+
+        .menu-section-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 8px;
+            font-size: 12px;
+            font-weight: 800;
+            color: var(--ink);
+        }
+
+        .menu-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 3px 8px;
+            border-radius: 999px;
+            background: rgba(213, 122, 50, 0.18);
+            color: var(--warm-strong);
+            font-size: 10px;
+            letter-spacing: 0.04em;
+        }
+
+        .menu-help {
+            margin: 0 0 10px;
+            font-size: 11px;
+            line-height: 1.5;
+            color: var(--muted);
+        }
+
+        .menu-switch {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.66);
+            border: 1px solid rgba(19, 34, 52, 0.08);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--ink);
+        }
+
+        .menu-switch-status {
+            font-weight: 800;
+        }
+
+        .menu-switch-status.is-on {
+            color: var(--accent);
+        }
+
+        .menu-switch-status.is-off {
+            color: var(--danger);
+        }
+
+        .menu-field {
+            margin-top: 10px;
+        }
+
+        .menu-field label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--ink);
+        }
+
+        .menu-field-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        .menu-input {
+            width: 100%;
+            min-width: 0;
+            padding: 9px 11px;
+            border-radius: 10px;
+            border: 1px solid var(--line);
+            background: rgba(255, 255, 255, 0.9);
+            color: var(--ink);
+            font-size: 12px;
+        }
+
+        .menu-button {
+            flex: 0 0 auto;
+            padding: 9px 12px;
+            border-radius: 10px;
+            border: none;
+            background: var(--accent);
+            color: #fff;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: none;
+        }
+
+        .menu-button:hover {
+            background: var(--accent-strong);
+        }
+
+        .experimental-status {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .experimental-status.is-active {
+            color: var(--accent-strong);
+        }
+
+        .experimental-status.is-warning {
+            color: var(--warm-strong);
+        }
+
         #main-container {
             gap: 10px;
             min-height: 0;
@@ -1118,6 +1240,29 @@
                         <div id="settings-menu" class="dropdown-menu">
                             <div class="menu-item" onclick="toggleAutoRadius()">📏 自動半径計算: <span id="auto-radius-status"
                                     style="font-weight:bold; color:#27ae60;">ON</span></div>
+                            <div class="menu-item" onclick="toggleTownBoundaryVisibility()">🟧 町丁境界表示: <span id="town-boundary-visibility-status"
+                                    style="font-weight:bold; color:#27ae60;">ON</span></div>
+                            <div class="menu-item" onclick="toggleSearchAreaRectVisibility()">🟦 検索範囲枠表示: <span id="search-area-rect-visibility-status"
+                                    style="font-weight:bold; color:#27ae60;">ON</span></div>
+                            <div class="menu-section">
+                                <div class="menu-section-title">
+                                    <span>境界ポリゴン表示</span>
+                                    <span class="menu-badge">EXPERIMENTAL</span>
+                                </div>
+                                <p class="menu-help">郵便番号境界や市区町村境界を作業マップに重ねる実験機能です。既定値は OFF です。</p>
+                                <div class="menu-switch" onclick="toggleExperimentalBoundaryMode()">
+                                    <span>実験機能を有効にする</span>
+                                    <span id="experimental-boundary-status" class="menu-switch-status is-off">OFF</span>
+                                </div>
+                                <div class="menu-field">
+                                    <label for="experimental-map-id-input">Google Maps Map ID</label>
+                                    <div class="menu-field-row">
+                                        <input type="text" id="experimental-map-id-input" class="menu-input" placeholder="Map ID を入力">
+                                        <button type="button" class="menu-button" onclick="saveExperimentalMapId()">保存</button>
+                                    </div>
+                                </div>
+                                <p class="menu-help" id="experimental-boundary-note">実験機能は OFF です。</p>
+                            </div>
                             <div class="menu-item" onclick="toggleLayout()">🔄 配置を切り替える</div>
                             <div class="menu-item" onclick="window.location.href='address-tool.html'">🏘️ 住所抽出ツールを開く</div>
                             <div class="menu-item" onclick="deleteApiKey()" style="color: #c0392b;">🗑️ APIキーを削除する</div>
@@ -1130,6 +1275,8 @@
                 <div class="control-row-bottom">
                     <div class="control-status">
                         <div id="calculated-radius-display">検出範囲: --</div>
+                        <div id="town-boundary-status-display" class="experimental-status">町丁境界: 未読込</div>
+                        <div id="boundary-status-display" class="experimental-status">境界ポリゴン: OFF</div>
                         <div id="list-actions" class="control-actions">
                             <button id="load-list-btn">一覧を読み込む</button>
                             <button id="next-row-btn" class="toolbar-btn">次の未処理住所を表示</button>
@@ -1163,6 +1310,7 @@
         </div>
     </div>
 
+    <script src="data/hiroshima-city-boundaries.js"></script>
     <script src="script.js"></script>
 
     <script>
