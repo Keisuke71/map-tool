@@ -999,6 +999,7 @@
             position: relative;
             display: flex;
             flex-direction: column;
+            gap: 10px;
             flex: 0 0 var(--sidebar-width, 280px);
             width: var(--sidebar-width, 280px);
             min-width: 220px;
@@ -1014,15 +1015,81 @@
         }
 
         #list-sidebar.list-mode-off {
-            flex-basis: 170px;
-            width: 170px;
-            min-width: 170px;
-            max-width: 170px;
+            flex-basis: var(--sidebar-width, 280px);
+            width: var(--sidebar-width, 280px);
         }
 
-        #list-sidebar.list-mode-off #list-panel,
-        #list-sidebar.list-mode-off #list-sidebar-resizer {
+        #list-sidebar.list-mode-off #list-panel {
             display: none;
+        }
+
+        #calc-log-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-height: 180px;
+            flex: 0 0 220px;
+            padding: 16px 14px 14px;
+            border-radius: 18px;
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(243, 248, 247, 0.94)),
+                rgba(255, 255, 255, 0.88);
+            border: 1px solid rgba(30, 127, 114, 0.12);
+            box-shadow: 0 16px 40px rgba(19, 34, 52, 0.08);
+            min-width: 0;
+        }
+
+        #list-sidebar.list-mode-off #calc-log-panel {
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+
+        #calc-log-list {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding-right: 4px;
+        }
+
+        .calc-log-empty,
+        .calc-log-entry {
+            padding: 10px 12px;
+            border-radius: 14px;
+            background: rgba(19, 34, 52, 0.04);
+            border: 1px solid rgba(19, 34, 52, 0.06);
+        }
+
+        .calc-log-entry.is-active {
+            background: rgba(30, 127, 114, 0.10);
+            border-color: rgba(30, 127, 114, 0.22);
+        }
+
+        .calc-log-entry.is-warning {
+            background: rgba(192, 57, 43, 0.08);
+            border-color: rgba(192, 57, 43, 0.18);
+        }
+
+        .calc-log-entry.is-muted {
+            background: rgba(19, 34, 52, 0.03);
+            border-color: rgba(19, 34, 52, 0.05);
+        }
+
+        .calc-log-time {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            color: rgba(19, 34, 52, 0.48);
+            margin-bottom: 4px;
+        }
+
+        .calc-log-message {
+            font-size: 13px;
+            line-height: 1.5;
+            color: var(--ink);
+            word-break: break-word;
         }
 
         .list-panel-header {
@@ -1057,7 +1124,7 @@
             gap: 6px;
         }
 
-        .list-status > div {
+        .list-status>div {
             width: 100%;
             min-width: 0;
             flex: 0 0 auto;
@@ -1109,7 +1176,7 @@
             gap: 8px;
             flex-wrap: wrap;
             flex: 0 1 auto;
-            justify-content: flex-end;
+            justify-content: flex-start;
         }
 
         .control-actions.hidden {
@@ -1150,6 +1217,7 @@
         }
 
         @media (max-width: 720px) {
+
             .control-status,
             .control-actions {
                 width: 100%;
@@ -1197,8 +1265,10 @@
                     <textarea id="list-tsv-input" placeholder="スプレッドシートからコピーしたデータをここに貼り付け"></textarea>
 
                     <div class="list-fields">
-                        <label>住所列: <input type="number" id="address-column-input" class="list-column-input" min="1" value="1"></label>
-                        <label>出力列: <input type="number" id="output-column-input" class="list-column-input" min="1" value="5"></label>
+                        <label>住所列: <input type="number" id="address-column-input" class="list-column-input" min="1"
+                                value="1"></label>
+                        <label>出力列: <input type="number" id="output-column-input" class="list-column-input" min="1"
+                                value="5"></label>
                     </div>
 
                     <div class="list-status">
@@ -1210,6 +1280,13 @@
 
                     <div id="list-message"></div>
                 </div>
+            </section>
+
+            <section id="calc-log-panel">
+                <div class="list-panel-header">
+                    <h3>計算ログ</h3>
+                </div>
+                <div id="calc-log-list" aria-live="polite"></div>
             </section>
 
             <div id="list-sidebar-resizer" aria-hidden="true"></div>
@@ -1240,9 +1317,11 @@
                         <div id="settings-menu" class="dropdown-menu">
                             <div class="menu-item" onclick="toggleAutoRadius()">📏 自動半径計算: <span id="auto-radius-status"
                                     style="font-weight:bold; color:#27ae60;">ON</span></div>
-                            <div class="menu-item" onclick="toggleTownBoundaryVisibility()">🟧 町丁境界表示: <span id="town-boundary-visibility-status"
+                            <div class="menu-item" onclick="toggleTownBoundaryVisibility()">🟧 町丁境界表示: <span
+                                    id="town-boundary-visibility-status"
                                     style="font-weight:bold; color:#27ae60;">ON</span></div>
-                            <div class="menu-item" onclick="toggleSearchAreaRectVisibility()">🟦 検索範囲枠表示: <span id="search-area-rect-visibility-status"
+                            <div class="menu-item" onclick="toggleSearchAreaRectVisibility()">🟦 検索範囲枠表示: <span
+                                    id="search-area-rect-visibility-status"
                                     style="font-weight:bold; color:#27ae60;">ON</span></div>
                             <div class="menu-section">
                                 <div class="menu-section-title">
@@ -1257,16 +1336,20 @@
                                 <div class="menu-field">
                                     <label for="experimental-map-id-input">Google Maps Map ID</label>
                                     <div class="menu-field-row">
-                                        <input type="text" id="experimental-map-id-input" class="menu-input" placeholder="Map ID を入力">
-                                        <button type="button" class="menu-button" onclick="saveExperimentalMapId()">保存</button>
+                                        <input type="text" id="experimental-map-id-input" class="menu-input"
+                                            placeholder="Map ID を入力">
+                                        <button type="button" class="menu-button"
+                                            onclick="saveExperimentalMapId()">保存</button>
                                     </div>
                                 </div>
                                 <p class="menu-help" id="experimental-boundary-note">実験機能は OFF です。</p>
                             </div>
                             <div class="menu-item" onclick="toggleLayout()">🔄 配置を切り替える</div>
-                            <div class="menu-item" onclick="window.location.href='address-tool.html'">🏘️ 住所抽出ツールを開く</div>
+                            <div class="menu-item" onclick="window.location.href='address-tool.html'">🏘️ 住所抽出ツールを開く
+                            </div>
                             <div class="menu-item" onclick="deleteApiKey()" style="color: #c0392b;">🗑️ APIキーを削除する</div>
-                            <a href="https://github.com/Keisuke71" target="_blank" rel="noreferrer" class="menu-item">👨‍💻 Developed by
+                            <a href="https://github.com/Keisuke71" target="_blank" rel="noreferrer"
+                                class="menu-item">👨‍💻 Developed by
                                 k4.matsumoto</a>
                         </div>
                     </div>
