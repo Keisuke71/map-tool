@@ -37,12 +37,16 @@ let experimentalBoundaryLayers = {};
 let experimentalBoundarySelections = {};
 let lastGeocodeResult = null;
 let townBoundaryLayer = null;
+let townBoundaryLayerDatasetKey = "";
+let activeTownBoundaryData = null;
+let activeTownBoundaryDatasetKey = "";
+let townBoundaryDataStatus = "unloaded";
 let selectedTownBoundaryKeyCodes = new Set();
 let currentTownBoundaryLabel = "";
 let currentSearchArea = null;
 let calculationLogs = [];
+let geocodeRequestToken = 0;
 
-const HIROSHIMA_CITY_BOUNDARY_DATA = window.HIROSHIMA_CITY_BOUNDARIES || null;
 const RADIUS_PRESETS = [50, 100, 300, 500, 1000];
 const EARTH_RADIUS_METERS = 6378137;
 const CALCULATION_LOG_LIMIT = 80;
@@ -198,7 +202,7 @@ document.addEventListener("DOMContentLoaded", () => {
     updateAutoRadiusDisplay();
     updateOverlayVisibilityDisplay();
     updateExperimentalBoundaryUI();
-    setTownBoundaryStatus(HIROSHIMA_CITY_BOUNDARY_DATA ? "町丁境界: 待機中" : "町丁境界: データ未読込", HIROSHIMA_CITY_BOUNDARY_DATA ? "muted" : "warning");
+    refreshTownBoundaryVisibilityState();
     restoreListState();
     applyListModeVisibility();
     initializeSidebarResize();
@@ -325,8 +329,23 @@ function renderBoundsRect() {
 function refreshTownBoundaryVisibilityState() {
     applyTownBoundaryStyles();
 
-    if (!HIROSHIMA_CITY_BOUNDARY_DATA) {
-        setTownBoundaryStatus("町丁境界: データ未読込", "warning");
+    if (!hasLoadedTownBoundaryData()) {
+        if (townBoundaryDataStatus === "loading") {
+            setTownBoundaryStatus("町丁境界: データ読込中...", "warning");
+            return;
+        }
+
+        if (townBoundaryDataStatus === "unavailable") {
+            setTownBoundaryStatus("町丁境界: 対応データなし", "warning");
+            return;
+        }
+
+        if (townBoundaryDataStatus === "error") {
+            setTownBoundaryStatus("町丁境界: 読込失敗", "warning");
+            return;
+        }
+
+        setTownBoundaryStatus("町丁境界: 未読込");
         return;
     }
 
@@ -500,14 +519,22 @@ window.initMap = function () {
 
     updateRefMap("東京都千代田区富士見2丁目");
 
-    initializeTownBoundaryLayer();
+    refreshTownBoundaryVisibilityState();
     ensureExperimentalBoundaryLayers();
 
     document.addEventListener('click', function (event) {
-        const menu = document.getElementById("settings-menu");
-        const btn = document.getElementById("settings-btn");
-        if (menu && btn && !btn.contains(event.target) && !menu.contains(event.target)) {
-            menu.classList.remove('show');
+        const settingsMenu = document.getElementById("settings-menu");
+        const settingsBtn = document.getElementById("settings-btn");
+        const docsMenu = document.getElementById("docs-menu");
+        const docsBtn = document.getElementById("docs-btn");
+
+        const clickedSettings = settingsMenu && settingsBtn
+            && (settingsBtn.contains(event.target) || settingsMenu.contains(event.target));
+        const clickedDocs = docsMenu && docsBtn
+            && (docsBtn.contains(event.target) || docsMenu.contains(event.target));
+
+        if (!clickedSettings && !clickedDocs) {
+            closeToolbarMenus();
         }
     });
 };
@@ -575,6 +602,41 @@ function normalizeTownBoundaryText(value) {
         .trim();
 }
 
+function hasLoadedTownBoundaryData() {
+    return Boolean(activeTownBoundaryData && Array.isArray(activeTownBoundaryData.features));
+}
+
+function clearTownBoundaryLayer() {
+    if (townBoundaryLayer) {
+        townBoundaryLayer.setMap(null);
+        townBoundaryLayer = null;
+    }
+
+    townBoundaryLayerDatasetKey = "";
+}
+
+function applyTownBoundaryDataset(definition, data) {
+    const nextDatasetKey = definition && definition.key ? String(definition.key) : "";
+    const datasetChanged = nextDatasetKey !== activeTownBoundaryDatasetKey;
+
+    activeTownBoundaryData = data;
+    activeTownBoundaryDatasetKey = nextDatasetKey;
+    townBoundaryDataStatus = hasLoadedTownBoundaryData() ? "ready" : "unloaded";
+
+    if (datasetChanged) {
+        clearTownBoundarySelection(true);
+        clearTownBoundaryLayer();
+    }
+}
+
+function resetTownBoundaryData(status = "unloaded") {
+    activeTownBoundaryData = null;
+    activeTownBoundaryDatasetKey = "";
+    townBoundaryDataStatus = status;
+    clearTownBoundarySelection(true);
+    clearTownBoundaryLayer();
+}
+
 function getTownBoundaryStyle(feature) {
     const keyCode = String(feature.getProperty("key_code") || "");
 
@@ -611,24 +673,26 @@ function clearTownBoundarySelection(keepStatus = false) {
     applyTownBoundaryStyles();
 
     if (!keepStatus) {
-        setTownBoundaryStatus(HIROSHIMA_CITY_BOUNDARY_DATA ? "町丁境界: 待機中" : "町丁境界: データ未読込", HIROSHIMA_CITY_BOUNDARY_DATA ? "muted" : "warning");
+        refreshTownBoundaryVisibilityState();
     }
 }
 
 function initializeTownBoundaryLayer() {
     if (!map) return false;
 
-    if (!HIROSHIMA_CITY_BOUNDARY_DATA || !Array.isArray(HIROSHIMA_CITY_BOUNDARY_DATA.features)) {
-        setTownBoundaryStatus("町丁境界: データ未読込", "warning");
+    if (!hasLoadedTownBoundaryData()) {
+        refreshTownBoundaryVisibilityState();
         return false;
     }
 
-    if (townBoundaryLayer) {
+    if (townBoundaryLayer && townBoundaryLayerDatasetKey === activeTownBoundaryDatasetKey) {
         return true;
     }
 
+    clearTownBoundaryLayer();
     townBoundaryLayer = new google.maps.Data({ map: map });
-    townBoundaryLayer.addGeoJson(HIROSHIMA_CITY_BOUNDARY_DATA);
+    townBoundaryLayer.addGeoJson(activeTownBoundaryData);
+    townBoundaryLayerDatasetKey = activeTownBoundaryDatasetKey;
     applyTownBoundaryStyles();
     refreshTownBoundaryVisibilityState();
     return true;
@@ -670,7 +734,7 @@ function buildTownBoundarySearchTexts(result) {
 }
 
 function findTownBoundaryMatches(result) {
-    if (!HIROSHIMA_CITY_BOUNDARY_DATA || !Array.isArray(HIROSHIMA_CITY_BOUNDARY_DATA.features)) {
+    if (!hasLoadedTownBoundaryData()) {
         return [];
     }
 
@@ -684,7 +748,7 @@ function findTownBoundaryMatches(result) {
     let bestScore = 0;
     let matches = [];
 
-    HIROSHIMA_CITY_BOUNDARY_DATA.features.forEach((feature) => {
+    activeTownBoundaryData.features.forEach((feature) => {
         const props = feature.properties || {};
         const cityNameNormalized = String(props.city_name_normalized || "");
 
@@ -834,6 +898,61 @@ function getAddressComponent(result, type) {
     const components = result && Array.isArray(result.address_components) ? result.address_components : [];
     const match = components.find((component) => Array.isArray(component.types) && component.types.includes(type));
     return match ? match.long_name : "";
+}
+
+async function ensureTownBoundaryDataForResult(result) {
+    const loader = window.TownBoundaryLoader;
+    if (!loader || typeof loader.ensureDatasetForResult !== "function") {
+        resetTownBoundaryData("error");
+        refreshTownBoundaryVisibilityState();
+        return { available: false, reason: "loader_unavailable" };
+    }
+
+    const resolvedDefinition = typeof loader.resolveDatasetDefinition === "function"
+        ? loader.resolveDatasetDefinition(result)
+        : null;
+
+    if (!resolvedDefinition) {
+        resetTownBoundaryData("unavailable");
+        refreshTownBoundaryVisibilityState();
+        return { available: false, reason: "not_configured" };
+    }
+
+    if (resolvedDefinition.key === activeTownBoundaryDatasetKey && hasLoadedTownBoundaryData()) {
+        initializeTownBoundaryLayer();
+        return {
+            available: true,
+            definition: resolvedDefinition,
+            data: activeTownBoundaryData,
+            cached: true
+        };
+    }
+
+    townBoundaryDataStatus = "loading";
+    refreshTownBoundaryVisibilityState();
+
+    try {
+        const loaded = await loader.ensureDatasetForResult(result);
+        if (!loaded || !loaded.definition || !loaded.data) {
+            resetTownBoundaryData("unavailable");
+            refreshTownBoundaryVisibilityState();
+            return { available: false, reason: "not_configured" };
+        }
+
+        applyTownBoundaryDataset(loaded.definition, loaded.data);
+        initializeTownBoundaryLayer();
+        return {
+            available: true,
+            definition: loaded.definition,
+            data: loaded.data,
+            cached: false
+        };
+    } catch (error) {
+        console.error("Town boundary dataset load failed.", error);
+        resetTownBoundaryData("error");
+        refreshTownBoundaryVisibilityState();
+        return { available: false, reason: "load_failed", error };
+    }
 }
 
 function buildExperimentalBoundaryQueries(result) {
@@ -1395,8 +1514,11 @@ function geocodeAddress() {
     appendCalculationLog(`検索開始: ${address}`);
 
     QuotaManager.increment();
+    const requestToken = ++geocodeRequestToken;
 
-    geocoder.geocode({ 'address': address }, (results, status) => {
+    geocoder.geocode({ 'address': address }, async (results, status) => {
+        if (requestToken !== geocodeRequestToken) return;
+
         if (status === 'OK') {
             const result = results[0];
             const location = result.geometry.location;
@@ -1406,7 +1528,18 @@ function geocodeAddress() {
             // 厳密な範囲(bounds)があれば優先
             const searchArea = result.geometry.bounds || result.geometry.viewport;
 
-            const townBoundaryMatches = findTownBoundaryMatches(result);
+            const townBoundaryLoadResult = await ensureTownBoundaryDataForResult(result);
+            if (requestToken !== geocodeRequestToken) return;
+
+            if (townBoundaryLoadResult.available && townBoundaryLoadResult.definition && !townBoundaryLoadResult.cached) {
+                appendCalculationLog(`町丁境界データ読込: ${townBoundaryLoadResult.definition.label || townBoundaryLoadResult.definition.key}`, "muted");
+            } else if (!townBoundaryLoadResult.available && townBoundaryLoadResult.reason === "not_configured") {
+                appendCalculationLog("町丁境界データなし: この地域は未対応です。", "muted");
+            } else if (!townBoundaryLoadResult.available && townBoundaryLoadResult.reason !== "loader_unavailable") {
+                appendCalculationLog("町丁境界データを使えないため、境界照合をスキップします。", "warning");
+            }
+
+            const townBoundaryMatches = townBoundaryLoadResult.available ? findTownBoundaryMatches(result) : [];
             let autoRadiusResult = null;
             let placementLocation = location;
             let mapFocusBounds = searchArea;
@@ -1547,9 +1680,27 @@ function copyToClipboard(triggerBtn) {
     });
 }
 
+function closeToolbarMenus() {
+    const settingsMenu = document.getElementById("settings-menu");
+    const docsMenu = document.getElementById("docs-menu");
+    if (settingsMenu) settingsMenu.classList.remove("show");
+    if (docsMenu) docsMenu.classList.remove("show");
+}
+
+function toggleDocsMenu() {
+    const menu = document.getElementById("docs-menu");
+    const settingsMenu = document.getElementById("settings-menu");
+    if (!menu) return;
+    if (settingsMenu) settingsMenu.classList.remove("show");
+    menu.classList.toggle("show");
+}
+
 function toggleSettings() {
     const menu = document.getElementById("settings-menu");
-    if (menu) menu.classList.toggle("show");
+    const docsMenu = document.getElementById("docs-menu");
+    if (!menu) return;
+    if (docsMenu) docsMenu.classList.remove("show");
+    menu.classList.toggle("show");
 }
 
 function toggleLayout() {
