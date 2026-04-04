@@ -119,17 +119,28 @@
         }
 
         /* 設定メニュー */
-        .settings-container {
+        .toolbar-menu-group {
             margin-left: auto;
-            /* 右端に寄せる */
+            display: flex;
+            align-items: center;
+            gap: 8px;
             position: relative;
         }
 
-        #settings-btn {
+        .toolbar-menu {
+            position: relative;
+        }
+
+        #settings-btn,
+        #docs-btn {
             background: transparent;
             font-size: 20px;
             padding: 0 5px;
             color: #ecf0f1;
+        }
+
+        #docs-menu {
+            right: 44px;
         }
 
         .dropdown-menu {
@@ -636,12 +647,17 @@
             border: 2px solid rgba(255, 255, 255, 0.85);
         }
 
-        .settings-container {
+        .toolbar-menu-group {
             margin-left: auto;
             z-index: 40;
         }
 
-        #settings-btn {
+        .toolbar-menu {
+            z-index: 40;
+        }
+
+        #settings-btn,
+        #docs-btn {
             width: 36px;
             height: 36px;
             padding: 0;
@@ -959,15 +975,23 @@
                 align-items: stretch;
             }
 
-            .settings-container {
+            .toolbar-menu-group {
                 margin-left: 0;
+                width: 100%;
+                flex-direction: column;
+                align-items: stretch;
             }
 
+            #docs-btn,
             #settings-btn,
             #search-btn,
             #header-copy-btn,
             #copy-btn {
                 width: 100%;
+            }
+
+            #docs-menu {
+                right: 0;
             }
 
             #address-input {
@@ -1312,7 +1336,12 @@
                         <button id="impossible-btn" class="radius-btn" onclick="setImpossible()">不可</button>
                     </div>
 
-                    <div class="settings-container">
+                    <div class="toolbar-menu-group">
+                        <button id="docs-btn" onclick="toggleDocsMenu()" title="ドキュメント">📚</button>
+                        <div id="docs-menu" class="dropdown-menu">
+                            <a href="help.html" target="_blank" rel="noreferrer" class="menu-item">📘 このツールの使い方</a>
+                            <a href="region-data-guide.html" target="_blank" rel="noreferrer" class="menu-item">🗂️ 地域データ追加手順</a>
+                        </div>
                         <button id="settings-btn" onclick="toggleSettings()" title="設定">⚙️</button>
                         <div id="settings-menu" class="dropdown-menu">
                             <div class="menu-item" onclick="toggleAutoRadius()">📏 自動半径計算: <span id="auto-radius-status"
@@ -1393,7 +1422,8 @@
         </div>
     </div>
 
-    <script src="data/hiroshima-city-boundaries.js"></script>
+    <script src="js/town-boundary-datasets.js"></script>
+    <script src="js/town-boundary-loader.js"></script>
     <script src="script.js"></script>
 
     <script>

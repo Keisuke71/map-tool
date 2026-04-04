@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>地域データ追加手順 - 地図ピンツール</title>
+    <style>
+        body {
+            font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+            line-height: 1.7;
+            color: #23313f;
+            margin: 0;
+            padding: 0;
+            background: #f4f6f8;
+        }
+
+        .container {
+            max-width: 920px;
+            margin: 40px auto;
+            background: #fff;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 8px 24px rgba(25, 39, 52, 0.08);
+        }
+
+        h1 {
+            margin-top: 0;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #2c3e50;
+            color: #2c3e50;
+        }
+
+        h2 {
+            margin-top: 32px;
+            padding: 10px 14px;
+            background: #eef4f6;
+            border-left: 5px solid #1e7f72;
+            color: #23313f;
+        }
+
+        code {
+            background: #eef2f5;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: Consolas, "Courier New", monospace;
+        }
+
+        pre {
+            background: #1f2933;
+            color: #f5f7fa;
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+
+        .note {
+            margin: 18px 0;
+            padding: 16px 18px;
+            border-radius: 8px;
+            background: #fff7e6;
+            border: 1px solid #f3d08b;
+            color: #6a4b10;
+        }
+
+        .success {
+            margin: 18px 0;
+            padding: 16px 18px;
+            border-radius: 8px;
+            background: #eaf7f3;
+            border: 1px solid #b6decf;
+            color: #145943;
+        }
+
+        ol,
+        ul {
+            padding-left: 22px;
+        }
+
+        li {
+            margin: 8px 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 18px 0;
+        }
+
+        th,
+        td {
+            border: 1px solid #d8e0e6;
+            padding: 10px 12px;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        th {
+            background: #f7fafc;
+        }
+
+        .back-link {
+            display: block;
+            margin-top: 36px;
+            text-align: center;
+        }
+
+        .btn {
+            display: inline-block;
+            background: #3498db;
+            color: #fff;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 6px;
+        }
+
+        .btn:hover {
+            background: #2980b9;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>地域データ追加手順</h1>
+        <p>このページは、新しい市区町村や地域の町丁境界データをこのツールへ追加するための手順書です。現在の構成は静的分割ロード型なので、地域ごとのデータファイルと設定を追加し、<code>main</code> へマージすると利用できるようになります。</p>
+
+        <div class="success">
+            今の運用では API サーバーは不要です。まずはこの手順で静的データを追加し、地域数や更新頻度が増えてきた段階でサーバー化を検討してください。
+        </div>
+
+        <h2>追加時に触る場所</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>場所</th>
+                    <th>役割</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>data/</code></td>
+                    <td>地域ごとの境界データを置く場所です。最終的には <code>.geojson</code> と <code>.js</code> を配置します。</td>
+                </tr>
+                <tr>
+                    <td><code>js/town-boundary-datasets.js</code></td>
+                    <td>どの住所にどのデータファイルを対応させるかを定義します。</td>
+                </tr>
+                <tr>
+                    <td><code>tools/</code></td>
+                    <td>GeoJSON をこのツール向けの軽量形式へ変換するスクリプトを置く場所です。</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h2>基本手順</h2>
+        <ol>
+            <li>元データを用意します。前提は EPSG:4326 の GeoJSON です。</li>
+            <li>地域用の変換スクリプトを作るか、既存スクリプトを複製して地域名に合わせて調整します。</li>
+            <li>変換後データを <code>data/</code> に出力します。</li>
+            <li><code>js/town-boundary-datasets.js</code> に地域定義を追加します。</li>
+            <li>ブラウザで対象地域の住所検索を行い、境界一致と半径計算を確認します。</li>
+            <li>コミットしてプルリクを作成し、<code>main</code> にマージします。</li>
+        </ol>
+
+        <h2>1. 変換スクリプトを用意する</h2>
+        <p>現在は <code>tools/build-hiroshima-boundaries.mjs</code> がひな形になります。新地域向けに複製して、出力するグローバル変数名やデータ名を地域に合わせて変更してください。</p>
+
+        <pre><code>node tools/build-hiroshima-boundaries.mjs input.geojson data/hiroshima-city-boundaries.geojson</code></pre>
+
+        <p>このスクリプトは次の 2 つを出力します。</p>
+        <ul>
+            <li><code>data/xxx-boundaries.geojson</code>: 加工済み GeoJSON</li>
+            <li><code>data/xxx-boundaries.js</code>: ブラウザから動的ロードするための JS ファイル</li>
+        </ul>
+
+        <div class="note">
+            新地域を増やすときは、ファイル名とグローバル変数名が衝突しないようにしてください。広島市の例なら <code>HIROSHIMA_CITY_BOUNDARIES</code> です。
+        </div>
+
+        <h2>2. data フォルダへ追加する</h2>
+        <p>出力ファイルを <code>data/</code> へ置きます。命名は地域が分かる形に揃えると後から見やすいです。</p>
+
+        <pre><code>data/
+  hiroshima-city-boundaries.geojson
+  hiroshima-city-boundaries.js
+  sapporo-city-boundaries.geojson
+  sapporo-city-boundaries.js</code></pre>
+
+        <h2>3. 地域定義を登録する</h2>
+        <p><code>js/town-boundary-datasets.js</code> に 1 件追加します。ローダーはこの定義を見て、住所検索結果に一致するデータだけ読み込みます。</p>
+
+        <pre><code>{
+    key: "hiroshima-city",
+    label: "広島県 広島市",
+    prefecture: "広島県",
+    localityAliases: ["広島市"],
+    adminLevel2Aliases: ["広島市"],
+    scriptPath: "data/hiroshima-city-boundaries.js",
+    globalName: "HIROSHIMA_CITY_BOUNDARIES"
+}</code></pre>
+
+        <p>各項目の意味は次の通りです。</p>
+        <ul>
+            <li><code>key</code>: 内部識別子です。重複させません。</li>
+            <li><code>label</code>: ログや画面表示向けの名前です。</li>
+            <li><code>prefecture</code>: ジオコード結果の都道府県名と一致させます。</li>
+            <li><code>localityAliases</code>: 通常は市区町村名を入れます。</li>
+            <li><code>adminLevel2Aliases</code>: 必要に応じて郡や代替表記を入れます。</li>
+            <li><code>scriptPath</code>: 動的ロードする JS ファイルの相対パスです。</li>
+            <li><code>globalName</code>: データ JS が <code>window</code> に登録する変数名です。</li>
+        </ul>
+
+        <h2>4. 動作確認する</h2>
+        <ol>
+            <li>追加した地域の住所で検索します。</li>
+            <li>ログ欄に地域データ読込の表示が出ることを確認します。</li>
+            <li>町丁境界が一致したときに半径計算へ反映されることを確認します。</li>
+            <li>その地域外でも既存地域が壊れていないことを確認します。</li>
+        </ol>
+
+        <div class="note">
+            うまく動かない場合は、都道府県名や市区町村名の表記ゆれ、<code>globalName</code> と生成 JS の変数名不一致をまず疑ってください。
+        </div>
+
+        <h2>5. 反映の考え方</h2>
+        <p>今の運用では、地域データの追加はコード更新と同じ扱いです。つまり、プルリクをマージして公開環境へデプロイされれば、その時点で新地域が使えるようになります。</p>
+
+        <ul>
+            <li>地域データを追加する</li>
+            <li>定義ファイルを更新する</li>
+            <li>プルリクを作成する</li>
+            <li><code>main</code> にマージする</li>
+            <li>公開環境へ反映する</li>
+        </ul>
+
+        <h2>将来サーバー化を考える目安</h2>
+        <p>次のどれかが強くなってきたら、API サーバーやデータ管理基盤を検討する価値があります。</p>
+        <ul>
+            <li>地域追加の頻度が高く、都度デプロイが重い</li>
+            <li>データ量が大きくなり、さらに細かい検索や管理が必要になる</li>
+            <li>非開発者でもデータ更新したくなる</li>
+            <li>配信キャッシュや更新履歴を厳密に管理したい</li>
+        </ul>
+
+        <p>しばらくは静的分割ロードのままで十分です。まずはこの運用で地域を増やし、痛みが出た段階でサーバー化すると無理がありません。</p>
+
+        <div class="back-link">
+            <a href="javascript:window.close();" class="btn">このページを閉じる</a>
+        </div>
+    </div>
+</body>
+
+</html>
