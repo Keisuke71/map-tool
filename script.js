@@ -733,6 +733,32 @@ function buildTownBoundarySearchTexts(result) {
     return candidates;
 }
 
+function buildTownBoundaryTownSearchTexts(cityCandidates, searchTexts) {
+    const candidates = new Set();
+
+    if (!cityCandidates.size) {
+        return candidates;
+    }
+
+    searchTexts.forEach((text) => {
+        cityCandidates.forEach((cityName) => {
+            const cityIndex = text.indexOf(cityName);
+
+            if (cityIndex < 0) {
+                return;
+            }
+
+            const townName = text.slice(cityIndex + cityName.length);
+
+            if (townName) {
+                candidates.add(townName);
+            }
+        });
+    });
+
+    return candidates;
+}
+
 function findTownBoundaryMatches(result) {
     if (!hasLoadedTownBoundaryData()) {
         return [];
@@ -740,6 +766,7 @@ function findTownBoundaryMatches(result) {
 
     const cityCandidates = buildTownBoundaryCityCandidates(result);
     const searchTexts = buildTownBoundarySearchTexts(result);
+    const townSearchTexts = buildTownBoundaryTownSearchTexts(cityCandidates, searchTexts);
 
     if (!searchTexts.size) {
         return [];
@@ -762,13 +789,29 @@ function findTownBoundaryMatches(result) {
             cityNameNormalized && props.town_name_normalized ? `${cityNameNormalized}${props.town_name_normalized}` : "",
             cityNameNormalized && props.town_name_arabic_normalized ? `${cityNameNormalized}${props.town_name_arabic_normalized}` : ""
         ].filter(Boolean);
+        const townCandidateNames = [
+            String(props.town_name_normalized || ""),
+            String(props.town_name_arabic_normalized || "")
+        ].filter(Boolean);
 
         let featureScore = 0;
 
         searchTexts.forEach((text) => {
             candidateNames.forEach((candidateName) => {
                 if (text.includes(candidateName)) {
-                    featureScore = Math.max(featureScore, candidateName.length);
+                    featureScore = Math.max(featureScore, 10000 + candidateName.length);
+                }
+            });
+        });
+
+        townSearchTexts.forEach((townText) => {
+            if (townText.length < 3) {
+                return;
+            }
+
+            townCandidateNames.forEach((candidateName) => {
+                if (candidateName.includes(townText)) {
+                    featureScore = Math.max(featureScore, 5000 + townText.length);
                 }
             });
         });
