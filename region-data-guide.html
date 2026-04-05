@@ -166,7 +166,7 @@
         <h2>1. 変換スクリプトを用意する</h2>
         <p>現在は <code>tools/build-hiroshima-boundaries.mjs</code> がひな形になります。新地域向けに複製して、出力するグローバル変数名やデータ名を地域に合わせて変更してください。</p>
 
-        <pre><code>node tools/build-hiroshima-boundaries.mjs input.geojson data/hiroshima-city-boundaries.geojson</code></pre>
+        <pre><code>node tools/build-hiroshima-boundaries.mjs input.geojson data/hiroshima-city/hiroshima-city-boundaries.geojson</code></pre>
 
         <p>このスクリプトは次の 2 つを出力します。</p>
         <ul>
@@ -182,10 +182,12 @@
         <p>出力ファイルを <code>data/</code> へ置きます。命名は地域が分かる形に揃えると後から見やすいです。</p>
 
         <pre><code>data/
-  hiroshima-city-boundaries.geojson
-  hiroshima-city-boundaries.js
-  sapporo-city-boundaries.geojson
-  sapporo-city-boundaries.js</code></pre>
+  hiroshima-city/
+    hiroshima-city-boundaries.geojson
+    hiroshima-city-boundaries.js
+  sapporo-city/
+    sapporo-city-boundaries.geojson
+    sapporo-city-boundaries.js</code></pre>
 
         <h2>3. 地域定義を登録する</h2>
         <p><code>js/town-boundary-datasets.js</code> に 1 件追加します。ローダーはこの定義を見て、住所検索結果に一致するデータだけ読み込みます。</p>
@@ -196,7 +198,7 @@
     prefecture: "広島県",
     localityAliases: ["広島市"],
     adminLevel2Aliases: ["広島市"],
-    scriptPath: "data/hiroshima-city-boundaries.js",
+    scriptPath: "data/hiroshima-city/hiroshima-city-boundaries.js",
     globalName: "HIROSHIMA_CITY_BOUNDARIES"
 }</code></pre>
 
