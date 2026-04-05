@@ -1,16 +1,20 @@
 const ADDRESS_TOOL_STORAGE_KEY = "addressToolCsvInputV1";
 const MUNICIPALITY_FILTER_STORAGE_KEY = "addressToolMunicipalityFilterV1";
+const BOUNDARY_DATASET_STORAGE_KEY = "addressToolBoundaryDatasetV1";
 const REQUIRED_COLUMNS = ["pref", "city", "ward", "oaza_cho", "machiaza_type", "chome_number"];
 const MAX_PERSISTED_CSV_LENGTH = 150000;
 
 const csvInput = document.getElementById("csv-input");
 const municipalityFilterInput = document.getElementById("municipality-filter");
+const boundaryDatasetSelect = document.getElementById("boundary-dataset-select");
 const column1Output = document.getElementById("column1-output");
 const column2Output = document.getElementById("column2-output");
 const column3Output = document.getElementById("column3-output");
 const statusEl = document.getElementById("status");
 const processedCountEl = document.getElementById("processed-count");
 const outputCountEl = document.getElementById("output-count");
+const boundaryDatasetCache = new Map();
+const boundaryDatasetPendingLoads = new Map();
 
 function normalizeValue(value) {
     return value == null ? "" : String(value).trim();
@@ -91,6 +95,19 @@ function persistMunicipalityFilter(filterValue) {
     }
 }
 
+function persistBoundaryDatasetSelection(datasetKey) {
+    if (!datasetKey) {
+        removeStoredValue(BOUNDARY_DATASET_STORAGE_KEY);
+        return;
+    }
+
+    try {
+        localStorage.setItem(BOUNDARY_DATASET_STORAGE_KEY, datasetKey);
+    } catch (_error) {
+        // 保存に失敗しても操作は継続する
+    }
+}
+
 function appendStorageNotice(message, notice) {
     return notice ? `${message} ${notice}` : message;
 }
@@ -98,6 +115,7 @@ function appendStorageNotice(message, notice) {
 function restoreInput() {
     const savedCsv = getStoredValue(ADDRESS_TOOL_STORAGE_KEY);
     const savedFilter = getStoredValue(MUNICIPALITY_FILTER_STORAGE_KEY);
+    const savedDatasetKey = getStoredValue(BOUNDARY_DATASET_STORAGE_KEY);
 
     if (savedCsv && csvInput) {
         csvInput.value = savedCsv;
@@ -105,6 +123,10 @@ function restoreInput() {
 
     if (savedFilter && municipalityFilterInput) {
         municipalityFilterInput.value = savedFilter;
+    }
+
+    if (savedDatasetKey && boundaryDatasetSelect) {
+        boundaryDatasetSelect.value = savedDatasetKey;
     }
 }
 
@@ -118,7 +140,7 @@ function formatChome(type, chomeNumber) {
 }
 
 function formatChomeColumn(type) {
-    return normalizeValue(type) === "1" ? "丁目" : "";
+    return normalizeValue(type) === "2" ? "" : "丁目";
 }
 
 function joinAddressParts(parts) {
@@ -225,6 +247,155 @@ function getFilterValue() {
     return municipalityFilterInput ? normalizeValue(municipalityFilterInput.value) : "";
 }
 
+function getBoundaryDatasetDefinitions() {
+    return Array.isArray(window.TOWN_BOUNDARY_DATASET_DEFINITIONS)
+        ? window.TOWN_BOUNDARY_DATASET_DEFINITIONS.slice()
+        : [];
+}
+
+function populateBoundaryDatasetSelect() {
+    if (!boundaryDatasetSelect) {
+        return;
+    }
+
+    const currentValue = normalizeValue(boundaryDatasetSelect.value);
+    const definitions = getBoundaryDatasetDefinitions()
+        .sort((a, b) => normalizeValue(a.label).localeCompare(normalizeValue(b.label), "ja"));
+
+    boundaryDatasetSelect.innerHTML = "";
+
+    const placeholderOption = document.createElement("option");
+    placeholderOption.value = "";
+    placeholderOption.textContent = "境界データを選択してください";
+    boundaryDatasetSelect.appendChild(placeholderOption);
+
+    definitions.forEach((definition) => {
+        const option = document.createElement("option");
+        option.value = definition.key;
+        option.textContent = definition.label || definition.key;
+        boundaryDatasetSelect.appendChild(option);
+    });
+
+    if (currentValue && definitions.some((definition) => definition.key === currentValue)) {
+        boundaryDatasetSelect.value = currentValue;
+    }
+}
+
+function findBoundaryDatasetDefinitionByKey(datasetKey) {
+    return getBoundaryDatasetDefinitions().find((definition) => definition.key === datasetKey) || null;
+}
+
+function ensureBoundaryDataset(definition) {
+    if (!definition || !definition.key || !definition.scriptPath || !definition.globalName) {
+        return Promise.reject(new Error("境界データ定義が不正です。"));
+    }
+
+    const existingData = window[definition.globalName];
+    if (existingData) {
+        boundaryDatasetCache.set(definition.key, existingData);
+        return Promise.resolve(existingData);
+    }
+
+    if (boundaryDatasetCache.has(definition.key)) {
+        return Promise.resolve(boundaryDatasetCache.get(definition.key));
+    }
+
+    if (boundaryDatasetPendingLoads.has(definition.key)) {
+        return boundaryDatasetPendingLoads.get(definition.key);
+    }
+
+    const pending = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = definition.scriptPath;
+        script.async = true;
+        script.defer = true;
+        script.onload = () => {
+            const loadedData = window[definition.globalName];
+            if (!loadedData) {
+                reject(new Error(`境界データが登録されませんでした: ${definition.globalName}`));
+                return;
+            }
+
+            boundaryDatasetCache.set(definition.key, loadedData);
+            resolve(loadedData);
+        };
+        script.onerror = () => {
+            reject(new Error(`境界データの読込に失敗しました: ${definition.scriptPath}`));
+        };
+        document.head.appendChild(script);
+    }).finally(() => {
+        boundaryDatasetPendingLoads.delete(definition.key);
+    });
+
+    boundaryDatasetPendingLoads.set(definition.key, pending);
+    return pending;
+}
+
+function splitCityAndWard(cityName) {
+    const normalizedCityName = normalizeValue(cityName);
+    const match = normalizedCityName.match(/^(.*?市)(.+区)$/);
+
+    if (!match) {
+        return { city: normalizedCityName, ward: "" };
+    }
+
+    return { city: match[1], ward: match[2] };
+}
+
+function getBoundaryTownName(properties) {
+    return normalizeValue(
+        properties && (properties.town_name_arabic || properties.town_name || properties.full_name_arabic || properties.full_name)
+    );
+}
+
+function getBoundaryRecordKey(properties) {
+    const keyCode = normalizeValue(properties && properties.key_code);
+    if (keyCode) {
+        return keyCode;
+    }
+
+    return [
+        normalizeValue(properties && properties.pref_name),
+        normalizeValue(properties && properties.city_name),
+        getBoundaryTownName(properties)
+    ].join("|");
+}
+
+function buildBoundaryAddressRows(features, municipalityFilter) {
+    const uniqueRows = new Map();
+
+    features.forEach((feature) => {
+        const properties = feature && feature.properties ? feature.properties : {};
+        const pref = normalizeValue(properties.pref_name);
+        const cityName = normalizeValue(properties.city_name);
+        const townName = getBoundaryTownName(properties);
+
+        if (!pref && !cityName && !townName) {
+            return;
+        }
+
+        const { city, ward } = splitCityAndWard(cityName);
+        if (!matchesMunicipalityFilter(municipalityFilter, pref, city, ward)) {
+            return;
+        }
+
+        const recordKey = getBoundaryRecordKey(properties);
+        if (uniqueRows.has(recordKey)) {
+            return;
+        }
+
+        uniqueRows.set(recordKey, {
+            detailedAddress: joinAddressParts([pref, cityName, townName]),
+            municipalityAddress: joinAddressParts([pref, cityName]),
+            chomeColumnValue: townName.includes("丁目") ? "" : "丁目"
+        });
+    });
+
+    return Array.from(uniqueRows.values())
+        .filter((row) => row.detailedAddress || row.municipalityAddress)
+        .sort((a, b) => a.detailedAddress.localeCompare(b.detailedAddress, "ja"));
+}
+
 function resetOutputs() {
     column1Output.value = "";
     column2Output.value = "";
@@ -312,6 +483,53 @@ function extractAddresses() {
     }
 }
 
+async function buildAddressesFromBoundaryDataset() {
+    const selectedDatasetKey = boundaryDatasetSelect ? normalizeValue(boundaryDatasetSelect.value) : "";
+    const municipalityFilter = getFilterValue();
+    const definition = findBoundaryDatasetDefinitionByKey(selectedDatasetKey);
+
+    persistMunicipalityFilter(municipalityFilter);
+    persistBoundaryDatasetSelection(selectedDatasetKey);
+
+    if (!definition) {
+        setStatus("境界データを選択してください。", "error");
+        return;
+    }
+
+    setStatus(`境界データ「${definition.label || definition.key}」を読み込んでいます...`);
+
+    try {
+        const data = await ensureBoundaryDataset(definition);
+        const features = Array.isArray(data && data.features) ? data.features : [];
+        const rows = buildBoundaryAddressRows(features, municipalityFilter);
+
+        if (!rows.length) {
+            resetOutputs();
+            setStatus(
+                municipalityFilter
+                    ? `境界データ「${definition.label || definition.key}」内に「${municipalityFilter}」に一致する住所がありません。`
+                    : `境界データ「${definition.label || definition.key}」から作成できる住所がありません。`,
+                "error"
+            );
+            return;
+        }
+
+        column1Output.value = rows.map((row) => row.detailedAddress).join("\n");
+        column2Output.value = rows.map((row) => row.municipalityAddress).join("\n");
+        column3Output.value = rows.map((row) => row.chomeColumnValue).join("\n");
+        setCounts(rows.length, rows.length);
+        setStatus(
+            municipalityFilter
+                ? `境界データ「${definition.label || definition.key}」から「${municipalityFilter}」に一致する住所を作成しました（${rows.length}件）。`
+                : `境界データ「${definition.label || definition.key}」から住所を作成しました（${rows.length}件）。`,
+            "success"
+        );
+    } catch (error) {
+        resetOutputs();
+        setStatus(error.message || "境界データからの作成に失敗しました。", "error");
+    }
+}
+
 function copyText(text, successMessage) {
     navigator.clipboard.writeText(text).then(() => {
         setStatus(successMessage, "success");
@@ -358,17 +576,32 @@ function clearAll() {
     if (municipalityFilterInput) {
         municipalityFilterInput.value = "";
     }
+    if (boundaryDatasetSelect) {
+        boundaryDatasetSelect.value = "";
+    }
 
     resetOutputs();
     removeStoredValue(ADDRESS_TOOL_STORAGE_KEY);
     removeStoredValue(MUNICIPALITY_FILTER_STORAGE_KEY);
+    removeStoredValue(BOUNDARY_DATASET_STORAGE_KEY);
     setStatus("入力と結果をクリアしました。", "success");
 }
 
+function initializeAddressTool() {
+    populateBoundaryDatasetSelect();
+    restoreInput();
+}
+
 document.getElementById("extract-btn").addEventListener("click", extractAddresses);
+document.getElementById("build-from-boundary-btn").addEventListener("click", buildAddressesFromBoundaryDataset);
 document.getElementById("copy-results-btn").addEventListener("click", copyResults);
 document.getElementById("copy-column1-btn").addEventListener("click", () => copyColumn(column1Output, "1列目"));
 document.getElementById("copy-column2-btn").addEventListener("click", () => copyColumn(column2Output, "2列目"));
 document.getElementById("copy-column3-btn").addEventListener("click", () => copyColumn(column3Output, "3列目"));
 document.getElementById("clear-btn").addEventListener("click", clearAll);
-document.addEventListener("DOMContentLoaded", restoreInput);
+if (boundaryDatasetSelect) {
+    boundaryDatasetSelect.addEventListener("change", () => {
+        persistBoundaryDatasetSelection(boundaryDatasetSelect.value);
+    });
+}
+document.addEventListener("DOMContentLoaded", initializeAddressTool);
