@@ -25,5 +25,14 @@ window.TOWN_BOUNDARY_DATASET_DEFINITIONS = [
         adminLevel2Aliases: ["倉敷市"],
         scriptPath: "data/kurashiki-city/kurashiki-city-boundaries.js",
         globalName: "KURASHIKI_CITY_BOUNDARIES"
+    },
+    {
+        key: "saitama-seibu",
+        label: "埼玉西部",
+        prefecture: "埼玉県",
+        localityAliases: ["所沢市", "飯能市"],
+        adminLevel2Aliases: ["所沢市", "飯能市"],
+        scriptPath: "data/saitama-seibu/saitama-seibu-boundaries.js",
+        globalName: "SAITAMA_SEIBU_BOUNDARIES"
     }
 ];
