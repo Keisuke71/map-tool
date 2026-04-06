@@ -30,7 +30,7 @@ window.TOWN_BOUNDARY_DATASET_DEFINITIONS = [
         key: "saitama-seibu",
         label: "埼玉西部",
         prefecture: "埼玉県",
-        localityAliases: ["所沢市", "飯能市"],
+        localityAliases: ["狭山市", "入間市", "所沢市", "飯能市", "日高市"],
         adminLevel2Aliases: ["所沢市", "飯能市"],
         scriptPath: "data/saitama-seibu/saitama-seibu-boundaries.js",
         globalName: "SAITAMA_SEIBU_BOUNDARIES"
