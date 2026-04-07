@@ -64,6 +64,20 @@
             resize: vertical;
         }
 
+        .drop-zone {
+            border: 2px dashed #b8c6d1;
+            border-radius: 10px;
+            padding: 14px;
+            background: #f8fbfd;
+            transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .drop-zone.is-dragover {
+            border-color: #3498db;
+            background: #eef7fd;
+            box-shadow: inset 0 0 0 1px rgba(52, 152, 219, 0.15);
+        }
+
         select {
             min-height: 46px;
             background: #fff;
@@ -76,6 +90,35 @@
             flex-wrap: wrap;
             gap: 10px;
             margin-top: 14px;
+        }
+
+        .tab-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 18px;
+            flex-wrap: wrap;
+        }
+
+        .tab-button {
+            background: #dfe8ee;
+            color: #2c3e50;
+        }
+
+        .tab-button:hover {
+            background: #cfdbe4;
+        }
+
+        .tab-button.is-active {
+            background: #3498db;
+            color: #fff;
+        }
+
+        .tool-panel {
+            display: none;
+        }
+
+        .tool-panel.is-active {
+            display: block;
         }
 
         button,
@@ -169,6 +212,10 @@
             flex-wrap: wrap;
         }
 
+        .result-grid.two-column {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
         @media (max-width: 768px) {
             .result-grid {
                 grid-template-columns: 1fr;
@@ -187,15 +234,22 @@
             <a href="index.html" class="link-button secondary">← 座標取得ツールへ戻る</a>
         </div>
 
+        <div class="tab-row">
+            <button id="extract-tab-btn" class="tab-button is-active" type="button">抽出・比較</button>
+            <button id="duplicate-tab-btn" class="tab-button" type="button">重複チェック</button>
+        </div>
+
+        <div id="extract-panel" class="tool-panel is-active">
         <section class="card">
             <div class="description">
                 入力CSVはヘッダー行付きでも利用できます。抽出ルールは以下のとおりです。<br>
-                追加済みの境界データは、下のプルダウンから <strong>広島市 / 京都市 / 埼玉西部</strong> のように選んで、CSVなしで住所データを作成できます。<br>
+                追加済みの境界データは、下のプルダウンから <strong>広島市 / 倉敷市 / 京都市 / 埼玉西部</strong> のように選んで、CSVなしで住所データを作成できます。<br>
                 1列目: <strong>pref + city + ward(存在時) + oaza_cho + machiaza_typeが2なら chome_number + 「丁目」</strong><br>
                 2列目: <strong>pref + city + ward(存在時)</strong><br>
 
-                市町村名を指定すると、その市町村に一致する行だけ抽出します。政令指定都市は <strong>京都市</strong> のように市名だけを指定しても、その市に属するすべての区をまとめて抽出できます。
-                3列目: <strong>住所に○丁目が含まれていない場合のみ「丁目」</strong>
+                市町村名を指定すると、その市町村に一致する行だけ抽出します。複数指定する場合は <strong>カンマ / 読点 / セミコロン</strong> 区切りで入力できます。政令指定都市は <strong>京都市</strong> のように市名だけを指定しても、その市に属するすべての区をまとめて抽出できます。
+                3列目: <strong>住所に○丁目が含まれていない場合のみ「丁目」</strong><br>
+                差分比較では、貼り付けたCSVから抽出した対象市区町村の住所一覧を、<strong>既存の全境界データ（広島市 / 倉敷市 / 京都市 / 埼玉西部）</strong> と照合します。
             </div>
 
             <div class="result-box filter-box">
@@ -203,20 +257,24 @@
                 <select id="boundary-dataset-select">
                     <option value="">境界データを選択してください</option>
                 </select>
-                <div class="sub-note">例: 広島市、京都市、埼玉西部</div>
+                <div class="sub-note">例: 広島市、倉敷市、京都市、埼玉西部</div>
                 <div class="button-row">
                     <button id="build-from-boundary-btn" type="button">選択した境界データから作成</button>
                 </div>
             </div>
 
             <div class="result-box filter-box">
-                <label for="municipality-filter"><strong>抽出対象の市町村名（任意）</strong></label>
-                <input id="municipality-filter" type="text" placeholder="例: 京都市 / 京都市中京区 / 横浜市 / 札幌市中央区">
+                <label for="municipality-filter"><strong>抽出対象の市町村名（任意・複数指定可）</strong></label>
+                <input id="municipality-filter" type="text" placeholder="例: 京都市, 京都市中京区, 横浜市">
             </div>
 
-            <textarea id="csv-input" placeholder="lg_code,machiaza_id,machiaza_type,pref,... のCSVをここに貼り付け"></textarea>
+            <div id="csv-drop-zone" class="drop-zone">
+                <textarea id="csv-input" placeholder="lg_code,machiaza_id,machiaza_type,pref,... のCSVをここに貼り付け、またはCSVファイルをここへドラッグ＆ドロップ"></textarea>
+            </div>
+            <div class="sub-note">CSVファイルをドラッグ＆ドロップすると内容を自動で読み込みます。</div>
             <div class="button-row">
                 <button id="extract-btn">住所を抽出する</button>
+                <button id="compare-btn" type="button">既存データとの差分を比較する</button>
                 <button id="copy-results-btn" class="success">抽出結果をコピー</button>
                 <button id="clear-btn" class="secondary">入力と結果をクリア</button>
             </div>
@@ -233,6 +291,7 @@
                     <h2>1列目: 詳細住所</h2>
                     <textarea id="column1-output" readonly placeholder="広島県広島市西区井口1丁目"></textarea>
                     <button id="copy-column1-btn" class="success">1列目をコピー</button>
+                    <button id="copy-column1-without-oaza-btn" type="button">大字・字なしでコピー</button>
                 </div>
                 <div class="result-box">
                     <h2>2列目: 市区町村住所</h2>
@@ -246,6 +305,58 @@
                 </div>
             </div>
         </section>
+
+        <section class="card">
+            <div class="result-box">
+                <h2>差分比較結果</h2>
+                <div class="sub-note">比較時は市区町村名を入力してください。詳細住所ベースで比較し、既存データは全境界データを横断して照合します。</div>
+            </div>
+            <div class="meta">
+                <div>ABRにのみ存在: <strong id="abr-only-count">0</strong></div>
+                <div>既存データにのみ存在: <strong id="boundary-only-count">0</strong></div>
+            </div>
+            <div class="result-grid two-column">
+                <div class="result-box">
+                    <h2>ABRにあるが既存データにない住所</h2>
+                    <textarea id="abr-only-output" readonly placeholder="広島県広島市西区井口1丁目"></textarea>
+                    <button id="copy-abr-only-btn" class="success">ABR差分をコピー</button>
+                </div>
+                <div class="result-box">
+                    <h2>既存データにあるがABRにない住所</h2>
+                    <textarea id="boundary-only-output" readonly placeholder="広島県広島市西区井口町"></textarea>
+                    <button id="copy-boundary-only-btn" class="success">既存データ差分をコピー</button>
+                </div>
+            </div>
+        </section>
+        </div>
+
+        <div id="duplicate-panel" class="tool-panel">
+            <section class="card">
+                <div class="description">
+                    住所一覧を貼り付けると、同一の住所が何件重複しているかを集計します。<br>
+                    改行区切りで判定し、前後の空白は無視します。
+                </div>
+                <textarea id="duplicate-input" placeholder="住所一覧を1行ずつ貼り付け"></textarea>
+                <div class="button-row">
+                    <button id="check-duplicates-btn" type="button">重複をチェックする</button>
+                    <button id="copy-duplicate-results-btn" class="success" type="button">重複一覧をコピー</button>
+                    <button id="clear-duplicate-btn" class="secondary" type="button">重複チェックをクリア</button>
+                </div>
+                <div id="duplicate-status" class="status"></div>
+                <div class="meta">
+                    <div>入力行数: <strong id="duplicate-total-count">0</strong></div>
+                    <div>重複住所数: <strong id="duplicate-address-count">0</strong></div>
+                    <div>重複行数: <strong id="duplicate-extra-count">0</strong></div>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="result-box">
+                    <h2>重複一覧</h2>
+                    <textarea id="duplicate-output" readonly placeholder="東京都千代田区丸の内1丁目\t3件"></textarea>
+                </div>
+            </section>
+        </div>
     </div>
 
     <script src="js/town-boundary-datasets.js"></script>
