@@ -25,6 +25,10 @@
         return aliases.some((alias) => candidates.has(alias));
     }
 
+    function isPrefectureWideDefinition(definition) {
+        return definition && definition.matchMode === "prefecture";
+    }
+
     function resolveDatasetDefinition(result) {
         const prefecture = normalizeLocationName(getAddressComponent(result, "administrative_area_level_1"));
         const locality = normalizeLocationName(getAddressComponent(result, "locality"));
@@ -35,6 +39,10 @@
             const definitionPrefecture = normalizeLocationName(definition.prefecture);
             if (!definitionPrefecture || definitionPrefecture !== prefecture) {
                 return false;
+            }
+
+            if (isPrefectureWideDefinition(definition)) {
+                return true;
             }
 
             const localityAliases = normalizeAliases(definition.localityAliases);

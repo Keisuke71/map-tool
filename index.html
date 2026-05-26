@@ -853,6 +853,45 @@
             background: rgba(255, 255, 255, 0.4);
         }
 
+        #ref-marker-overlay {
+            position: absolute;
+            inset: 0;
+            z-index: 7;
+            pointer-events: none;
+            overflow: hidden;
+        }
+
+        .ref-radius-circle {
+            position: absolute;
+            border: 2px solid rgba(255, 0, 0, 0.82);
+            border-radius: 50%;
+            background: rgba(255, 0, 0, 0.16);
+            box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
+            transform: translate(-50%, -50%);
+        }
+
+        .ref-marker-pin {
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            border: 2px solid #fff;
+            border-radius: 50% 50% 50% 0;
+            background: #d93025;
+            box-shadow: 0 2px 8px rgba(19, 34, 52, 0.35);
+            transform: translate(-50%, -100%) rotate(-45deg);
+        }
+
+        .ref-marker-pin::after {
+            content: "";
+            position: absolute;
+            top: 4px;
+            left: 4px;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #fff;
+        }
+
         .area-label {
             top: 12px;
             left: 12px;
@@ -1352,6 +1391,8 @@
                             <div class="menu-item" onclick="toggleSearchAreaRectVisibility()">🟦 検索範囲枠表示: <span
                                     id="search-area-rect-visibility-status"
                                     style="font-weight:bold; color:#27ae60;">ON</span></div>
+                            <div class="menu-item" onclick="toggleReferenceMapSync()">🔗 参照マップ同期: <span
+                                    id="ref-map-sync-status" style="font-weight:bold; color:#27ae60;">ON</span></div>
                             <div class="menu-section">
                                 <div class="menu-section-title">
                                     <span>境界ポリゴン表示</span>
@@ -1389,6 +1430,7 @@
                         <div id="calculated-radius-display">検出範囲: --</div>
                         <div id="town-boundary-status-display" class="experimental-status">町丁境界: 未読込</div>
                         <div id="boundary-status-display" class="experimental-status">境界ポリゴン: OFF</div>
+                        <div id="ref-map-status-display" class="experimental-status">参照マップ: 同期待機中</div>
                         <div id="list-actions" class="control-actions">
                             <button id="load-list-btn">一覧を読み込む</button>
                             <button id="next-row-btn" class="toolbar-btn">次の未処理住所を表示</button>
@@ -1411,6 +1453,7 @@
                 <div id="ref-area">
                     <div class="area-label">参照マップ</div>
                     <iframe id="ref-frame" src="about:blank"></iframe>
+                    <div id="ref-marker-overlay" aria-hidden="true"></div>
                 </div>
             </div>
 

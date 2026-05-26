@@ -14,6 +14,7 @@ const STORAGE_KEY_EXPERIMENTAL_BOUNDARIES = "experimentalBoundaryOverlayEnabledV
 const STORAGE_KEY_EXPERIMENTAL_MAP_ID = "experimentalBoundaryMapIdV1";
 const STORAGE_KEY_TOWN_BOUNDARY_VISIBLE = "townBoundaryVisibleV1";
 const STORAGE_KEY_SEARCH_AREA_RECT_VISIBLE = "searchAreaRectVisibleV1";
+const STORAGE_KEY_REF_MAP_SYNC = "referenceMapSyncEnabledV1";
 
 
 let apiKey = localStorage.getItem(STORAGE_KEY_API);
@@ -23,6 +24,7 @@ let isExperimentalBoundaryEnabled = localStorage.getItem(STORAGE_KEY_EXPERIMENTA
 let experimentalMapId = (localStorage.getItem(STORAGE_KEY_EXPERIMENTAL_MAP_ID) || "").trim();
 let isTownBoundaryVisible = localStorage.getItem(STORAGE_KEY_TOWN_BOUNDARY_VISIBLE) !== "false";
 let isSearchAreaRectVisible = localStorage.getItem(STORAGE_KEY_SEARCH_AREA_RECT_VISIBLE) !== "false";
+let isRefMapSyncEnabled = localStorage.getItem(STORAGE_KEY_REF_MAP_SYNC) !== "false";
 
 let map, marker, circle, boundsRect, geocoder;
 let currentRadius = 300;
@@ -46,6 +48,9 @@ let currentTownBoundaryLabel = "";
 let currentSearchArea = null;
 let calculationLogs = [];
 let geocodeRequestToken = 0;
+let lastRefMapQuery = "";
+let lastRefMapEmbedUrl = "";
+let refMapRefreshTimer = null;
 
 const RADIUS_PRESETS = [50, 100, 300, 500, 1000];
 const EARTH_RADIUS_METERS = 6378137;
@@ -202,6 +207,7 @@ document.addEventListener("DOMContentLoaded", () => {
     updateAutoRadiusDisplay();
     updateOverlayVisibilityDisplay();
     updateExperimentalBoundaryUI();
+    updateReferenceMapSyncDisplay();
     refreshTownBoundaryVisibilityState();
     restoreListState();
     applyListModeVisibility();
@@ -276,6 +282,31 @@ function updateOverlayVisibilityDisplay() {
     }
 }
 
+function updateReferenceMapSyncDisplay() {
+    const syncToggle = document.getElementById("ref-map-sync-status");
+    const status = document.getElementById("ref-map-status-display");
+
+    if (syncToggle) {
+        syncToggle.innerText = isRefMapSyncEnabled ? "ON" : "OFF";
+        syncToggle.style.color = isRefMapSyncEnabled ? "#27ae60" : "#c0392b";
+    }
+
+    if (status) {
+        const syncLabel = isRefMapSyncEnabled ? "同期ON" : "同期OFF";
+        const overlayLabel = isRefMapSyncEnabled ? "ピン・円表示" : "ピン・円非表示";
+        status.textContent = `参照マップ: ${syncLabel} / ${overlayLabel}`;
+        status.classList.toggle("is-active", isRefMapSyncEnabled);
+    }
+}
+
+function toggleReferenceMapSync() {
+    isRefMapSyncEnabled = !isRefMapSyncEnabled;
+    localStorage.setItem(STORAGE_KEY_REF_MAP_SYNC, String(isRefMapSyncEnabled));
+    updateReferenceMapSyncDisplay();
+    renderRefMap();
+    renderReferenceMarkerOverlay();
+}
+
 function setTownBoundaryStatus(message, tone = "muted") {
     const status = document.getElementById("town-boundary-status-display");
     if (!status) return;
@@ -315,10 +346,11 @@ function renderBoundsRect() {
     }
 
     boundsRect = new google.maps.Rectangle({
-        strokeColor: "#0000FF",
-        strokeOpacity: 0.5,
-        strokeWeight: 2,
-        fillOpacity: 0,
+        strokeColor: "#1473e6",
+        strokeOpacity: 0.85,
+        strokeWeight: 3,
+        fillColor: "#1473e6",
+        fillOpacity: 0.06,
         map: map,
         bounds: currentSearchArea,
         clickable: false,
@@ -471,6 +503,7 @@ function initializeSidebarResize() {
 
     window.addEventListener("resize", () => {
         applySavedSidebarWidth();
+        renderReferenceMarkerOverlay();
     });
 }
 
@@ -514,6 +547,13 @@ window.initMap = function () {
 
         map.addListener("click", (e) => {
             placeMarkerAndCircle(e.latLng);
+        });
+
+        map.addListener("idle", () => {
+            if (isRefMapSyncEnabled) {
+                scheduleRefMapRefresh();
+            }
+            renderReferenceMarkerOverlay();
         });
     }
 
@@ -1124,10 +1164,12 @@ function drawCircle(center) {
         fillColor: "#FF0000", fillOpacity: 0.2, map: map, center: center,
         radius: currentRadius, clickable: false
     });
+    renderReferenceMarkerOverlay();
 }
 
 function updateCirclePosition(latLng) {
     if (circle) circle.setCenter(latLng);
+    renderReferenceMarkerOverlay();
 }
 
 function getRadiusLabel(radius) {
@@ -1502,6 +1544,7 @@ function setRadius(radius) {
         circle.setRadius(radius);
         if (marker) generateOutput(marker.getPosition());
     }
+    renderReferenceMarkerOverlay();
 }
 
 // 不可ボタン
@@ -1675,12 +1718,136 @@ function geocodeAddress() {
     });
 }
 
-function updateRefMap(query) {
-    const frame = document.getElementById("ref-frame");
-    if (frame && apiKey) {
-        const embedUrl = `https://www.google.com/maps/embed/v1/place?key=${apiKey}&q=${encodeURIComponent(query)}`;
-        frame.src = embedUrl;
+function formatRefMapCenter(center) {
+    if (!center) return "";
+    return `${center.lat().toFixed(7)},${center.lng().toFixed(7)}`;
+}
+
+function getRefMapZoom() {
+    if (!map) return null;
+    const zoom = map.getZoom();
+    if (!Number.isFinite(zoom)) return null;
+    return Math.min(Math.max(Math.round(zoom), 0), 21);
+}
+
+function buildRefMapUrl(query) {
+    if (!apiKey || !query) return "";
+
+    const params = new URLSearchParams({
+        key: apiKey,
+        q: query
+    });
+
+    if (isRefMapSyncEnabled && map) {
+        const center = formatRefMapCenter(map.getCenter());
+        const zoom = getRefMapZoom();
+        if (center) params.set("center", center);
+        if (Number.isFinite(zoom)) params.set("zoom", String(zoom));
     }
+
+    return `https://www.google.com/maps/embed/v1/place?${params.toString()}`;
+}
+
+function renderRefMap() {
+    const frame = document.getElementById("ref-frame");
+    if (!frame || !apiKey || !lastRefMapQuery) return;
+
+    if (!frame.dataset.overlayListenerAttached) {
+        frame.addEventListener("load", () => {
+            setTimeout(renderReferenceMarkerOverlay, 120);
+        });
+        frame.dataset.overlayListenerAttached = "true";
+    }
+
+    const embedUrl = buildRefMapUrl(lastRefMapQuery);
+    if (embedUrl && embedUrl !== lastRefMapEmbedUrl) {
+        frame.src = embedUrl;
+        lastRefMapEmbedUrl = embedUrl;
+    }
+    renderReferenceMarkerOverlay();
+}
+
+function scheduleRefMapRefresh(delay = 250) {
+    if (refMapRefreshTimer) {
+        clearTimeout(refMapRefreshTimer);
+    }
+
+    refMapRefreshTimer = setTimeout(() => {
+        refMapRefreshTimer = null;
+        renderRefMap();
+    }, delay);
+}
+
+function updateRefMap(query) {
+    lastRefMapQuery = query || lastRefMapQuery;
+    renderRefMap();
+}
+
+function projectLatLngToWorldPoint(lat, lng) {
+    const siny = clampNumber(Math.sin(lat * Math.PI / 180), -0.9999, 0.9999);
+    return {
+        x: 256 * (0.5 + lng / 360),
+        y: 256 * (0.5 - Math.log((1 + siny) / (1 - siny)) / (4 * Math.PI))
+    };
+}
+
+function projectLatLngToRefMapPixel(latLng, center, zoom, rect) {
+    const markerPoint = projectLatLngToWorldPoint(latLng.lat(), latLng.lng());
+    const centerPoint = projectLatLngToWorldPoint(center.lat(), center.lng());
+    const scale = 2 ** zoom;
+
+    return {
+        x: (markerPoint.x - centerPoint.x) * scale + rect.width / 2,
+        y: (markerPoint.y - centerPoint.y) * scale + rect.height / 2
+    };
+}
+
+function getMetersPerPixel(lat, zoom) {
+    return Math.cos(lat * Math.PI / 180) * 2 * Math.PI * EARTH_RADIUS_METERS / (256 * (2 ** zoom));
+}
+
+function renderReferenceMarkerOverlay() {
+    const overlay = document.getElementById("ref-marker-overlay");
+    if (!overlay) return;
+
+    overlay.innerHTML = "";
+
+    if (!isRefMapSyncEnabled || !map || !marker || !circle) return;
+
+    const center = map.getCenter();
+    const zoom = getRefMapZoom();
+    const markerPosition = marker.getPosition();
+    if (!center || !markerPosition || !Number.isFinite(zoom)) return;
+
+    const rect = overlay.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+
+    const pixel = projectLatLngToRefMapPixel(markerPosition, center, zoom, rect);
+    const metersPerPixel = getMetersPerPixel(markerPosition.lat(), zoom);
+    if (!Number.isFinite(metersPerPixel) || metersPerPixel <= 0) return;
+
+    const radiusPx = currentRadius / metersPerPixel;
+    const padding = Math.max(radiusPx, 24);
+    const isOutside = pixel.x < -padding
+        || pixel.x > rect.width + padding
+        || pixel.y < -padding
+        || pixel.y > rect.height + padding;
+    if (isOutside) return;
+
+    const radiusCircle = document.createElement("div");
+    radiusCircle.className = "ref-radius-circle";
+    radiusCircle.style.left = `${pixel.x}px`;
+    radiusCircle.style.top = `${pixel.y}px`;
+    radiusCircle.style.width = `${radiusPx * 2}px`;
+    radiusCircle.style.height = `${radiusPx * 2}px`;
+
+    const pin = document.createElement("div");
+    pin.className = "ref-marker-pin";
+    pin.style.left = `${pixel.x}px`;
+    pin.style.top = `${pixel.y}px`;
+
+    overlay.appendChild(radiusCircle);
+    overlay.appendChild(pin);
 }
 
 function generateOutput(latLng) {

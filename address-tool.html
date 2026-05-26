@@ -243,13 +243,14 @@
         <section class="card">
             <div class="description">
                 入力CSVはヘッダー行付きでも利用できます。抽出ルールは以下のとおりです。<br>
-                追加済みの境界データは、下のプルダウンから <strong>広島市 / 倉敷市 / 京都市 / 埼玉西部</strong> のように選んで、CSVなしで住所データを作成できます。<br>
-                1列目: <strong>pref + city + ward(存在時) + oaza_cho + machiaza_typeが2なら chome_number + 「丁目」</strong><br>
+                旧ABR形式（pref / city / ward / oaza_cho...）に加え、都道府県名 / 市区町村名 / 大字町丁目名のCSVにも対応しています。新形式では「岩美郡岩美町」は「岩美町」として出力します。<br>
+                追加済みの境界データは、下のプルダウンから <strong>広島市 / 倉敷市 / 京都市 / 埼玉西部 / 佐賀県全域</strong> のように選んで、CSVなしで住所データを作成できます。<br>
+                1列目: <strong>pref + city + ward(存在時) + oaza_cho + machiaza_typeが2なら chome_number + 「丁目」（なければ chome） + koaza(存在時)</strong><br>
                 2列目: <strong>pref + city + ward(存在時)</strong><br>
 
                 市町村名を指定すると、その市町村に一致する行だけ抽出します。複数指定する場合は <strong>カンマ / 読点 / セミコロン</strong> 区切りで入力できます。政令指定都市は <strong>京都市</strong> のように市名だけを指定しても、その市に属するすべての区をまとめて抽出できます。
                 3列目: <strong>住所に○丁目が含まれていない場合のみ「丁目」</strong><br>
-                差分比較では、貼り付けたCSVから抽出した対象市区町村の住所一覧を、<strong>既存の全境界データ（広島市 / 倉敷市 / 京都市 / 埼玉西部）</strong> と照合します。
+                差分比較では、貼り付けたCSVから抽出した対象市区町村の住所一覧を、<strong>既存の全境界データ（広島市 / 倉敷市 / 京都市 / 埼玉西部 / 佐賀県全域）</strong> と照合します。
             </div>
 
             <div class="result-box filter-box">
@@ -257,7 +258,7 @@
                 <select id="boundary-dataset-select">
                     <option value="">境界データを選択してください</option>
                 </select>
-                <div class="sub-note">例: 広島市、倉敷市、京都市、埼玉西部</div>
+                <div class="sub-note">例: 広島市、倉敷市、京都市、埼玉西部、佐賀県全域</div>
                 <div class="button-row">
                     <button id="build-from-boundary-btn" type="button">選択した境界データから作成</button>
                 </div>
@@ -269,7 +270,7 @@
             </div>
 
             <div id="csv-drop-zone" class="drop-zone">
-                <textarea id="csv-input" placeholder="lg_code,machiaza_id,machiaza_type,pref,... のCSVをここに貼り付け、またはCSVファイルをここへドラッグ＆ドロップ"></textarea>
+                <textarea id="csv-input" placeholder="lg_code,machiaza_id,machiaza_type,pref,... または 都道府県名,市区町村名,大字町丁目名 を含むCSVをここに貼り付け、またはCSVファイルをここへドラッグ＆ドロップ"></textarea>
             </div>
             <div class="sub-note">CSVファイルをドラッグ＆ドロップすると内容を自動で読み込みます。</div>
             <div class="button-row">
