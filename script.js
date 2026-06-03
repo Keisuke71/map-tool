@@ -9,11 +9,20 @@ const STORAGE_KEY_ADDRESS_COL = "mapToolAddressColumnV1";
 const STORAGE_KEY_OUTPUT_COL = "mapToolOutputColumnV1";
 const STORAGE_KEY_CURRENT_ROW = "mapToolCurrentRowIndexV1";
 const STORAGE_KEY_LIST_MODE_ENABLED = "mapToolListModeEnabledV1";
+const STORAGE_KEY_SIDEBAR_WIDTH = "mapToolSidebarWidthV1";
+const STORAGE_KEY_EXPERIMENTAL_BOUNDARIES = "experimentalBoundaryOverlayEnabledV1";
+const STORAGE_KEY_EXPERIMENTAL_MAP_ID = "experimentalBoundaryMapIdV1";
+const STORAGE_KEY_TOWN_BOUNDARY_VISIBLE = "townBoundaryVisibleV1";
+const STORAGE_KEY_SEARCH_AREA_RECT_VISIBLE = "searchAreaRectVisibleV1";
 
 
 let apiKey = localStorage.getItem(STORAGE_KEY_API);
 let isAutoRadiusEnabled = localStorage.getItem(STORAGE_KEY_AUTO_RADIUS) !== "false"; // デフォルトON
 let layoutMode = localStorage.getItem(STORAGE_KEY_LAYOUT) || "layout-horizontal";
+let isExperimentalBoundaryEnabled = localStorage.getItem(STORAGE_KEY_EXPERIMENTAL_BOUNDARIES) === "true";
+let experimentalMapId = (localStorage.getItem(STORAGE_KEY_EXPERIMENTAL_MAP_ID) || "").trim();
+let isTownBoundaryVisible = localStorage.getItem(STORAGE_KEY_TOWN_BOUNDARY_VISIBLE) !== "false";
+let isSearchAreaRectVisible = localStorage.getItem(STORAGE_KEY_SEARCH_AREA_RECT_VISIBLE) !== "false";
 
 let map, marker, circle, boundsRect, geocoder;
 let currentRadius = 300;
@@ -23,6 +32,45 @@ let outputColumnIndex = Number(localStorage.getItem(STORAGE_KEY_OUTPUT_COL)) || 
 let currentListRowIndex = Number(localStorage.getItem(STORAGE_KEY_CURRENT_ROW));
 if (!Number.isInteger(currentListRowIndex) || currentListRowIndex < 0) currentListRowIndex = -1;
 let isListModeEnabled = localStorage.getItem(STORAGE_KEY_LIST_MODE_ENABLED) !== "false";
+let sidebarWidth = Number(localStorage.getItem(STORAGE_KEY_SIDEBAR_WIDTH)) || 280;
+let experimentalBoundaryLayers = {};
+let experimentalBoundarySelections = {};
+let lastGeocodeResult = null;
+let townBoundaryLayer = null;
+let townBoundaryLayerDatasetKey = "";
+let activeTownBoundaryData = null;
+let activeTownBoundaryDatasetKey = "";
+let townBoundaryDataStatus = "unloaded";
+let selectedTownBoundaryKeyCodes = new Set();
+let currentTownBoundaryLabel = "";
+let currentSearchArea = null;
+let calculationLogs = [];
+let geocodeRequestToken = 0;
+
+const RADIUS_PRESETS = [50, 100, 300, 500, 1000];
+const EARTH_RADIUS_METERS = 6378137;
+const CALCULATION_LOG_LIMIT = 80;
+
+const EXPERIMENTAL_BOUNDARY_CONFIG = [
+    {
+        key: "postal_code",
+        label: "郵便番号境界",
+        featureType: "POSTAL_CODE",
+        color: "#2f6fed",
+        fillOpacity: 0.08,
+        strokeOpacity: 0.9,
+        strokeWeight: 2
+    },
+    {
+        key: "locality",
+        label: "市区町村境界",
+        featureType: "LOCALITY",
+        color: "#1e7f72",
+        fillOpacity: 0.07,
+        strokeOpacity: 0.9,
+        strokeWeight: 2
+    }
+];
 
 
 // ★設定: 回数制限の目安
@@ -87,15 +135,77 @@ const QuotaManager = {
     }
 };
 
+function appendCalculationLog(message, tone = "info") {
+    calculationLogs.unshift({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        time: new Date(),
+        message,
+        tone
+    });
+
+    if (calculationLogs.length > CALCULATION_LOG_LIMIT) {
+        calculationLogs = calculationLogs.slice(0, CALCULATION_LOG_LIMIT);
+    }
+
+    renderCalculationLogs();
+}
+
+function clearCalculationLogs() {
+    calculationLogs = [];
+    renderCalculationLogs();
+}
+
+function renderCalculationLogs() {
+    const container = document.getElementById("calc-log-list");
+    if (!container) return;
+
+    container.innerHTML = "";
+
+    if (!calculationLogs.length) {
+        const empty = document.createElement("div");
+        empty.className = "calc-log-empty";
+        empty.textContent = "検索や半径計算のログをここに表示します。";
+        container.appendChild(empty);
+        return;
+    }
+
+    calculationLogs.forEach((entry) => {
+        const item = document.createElement("div");
+        item.className = `calc-log-entry is-${entry.tone}`;
+
+        const time = document.createElement("div");
+        time.className = "calc-log-time";
+        time.textContent = entry.time.toLocaleTimeString("ja-JP", {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit"
+        });
+
+        const message = document.createElement("div");
+        message.className = "calc-log-message";
+        message.textContent = entry.message;
+
+        item.appendChild(time);
+        item.appendChild(message);
+        container.appendChild(item);
+    });
+}
+
 /* =========================================
    初期化プロセス
    ========================================= */
 document.addEventListener("DOMContentLoaded", () => {
     applySavedLayout();
+    applySavedSidebarWidth();
+    renderCalculationLogs();
     QuotaManager.updateDisplay();
     updateAutoRadiusDisplay();
+    updateOverlayVisibilityDisplay();
+    updateExperimentalBoundaryUI();
+    refreshTownBoundaryVisibilityState();
     restoreListState();
     applyListModeVisibility();
+    initializeSidebarResize();
 
     if (apiKey) {
         QuotaManager.increment();
@@ -151,6 +261,219 @@ function updateAutoRadiusDisplay() {
     }
 }
 
+function updateOverlayVisibilityDisplay() {
+    const townToggle = document.getElementById("town-boundary-visibility-status");
+    const rectToggle = document.getElementById("search-area-rect-visibility-status");
+
+    if (townToggle) {
+        townToggle.innerText = isTownBoundaryVisible ? "ON" : "OFF";
+        townToggle.style.color = isTownBoundaryVisible ? "#27ae60" : "#c0392b";
+    }
+
+    if (rectToggle) {
+        rectToggle.innerText = isSearchAreaRectVisible ? "ON" : "OFF";
+        rectToggle.style.color = isSearchAreaRectVisible ? "#27ae60" : "#c0392b";
+    }
+}
+
+function setTownBoundaryStatus(message, tone = "muted") {
+    const status = document.getElementById("town-boundary-status-display");
+    if (!status) return;
+
+    status.textContent = message;
+    status.classList.remove("is-active", "is-warning");
+
+    if (tone === "active") {
+        status.classList.add("is-active");
+    } else if (tone === "warning") {
+        status.classList.add("is-warning");
+    }
+}
+
+function setExperimentalBoundaryStatus(message, tone = "muted") {
+    const status = document.getElementById("boundary-status-display");
+    if (!status) return;
+
+    status.textContent = message;
+    status.classList.remove("is-active", "is-warning");
+
+    if (tone === "active") {
+        status.classList.add("is-active");
+    } else if (tone === "warning") {
+        status.classList.add("is-warning");
+    }
+}
+
+function renderBoundsRect() {
+    if (boundsRect) {
+        boundsRect.setMap(null);
+        boundsRect = null;
+    }
+
+    if (!map || !currentSearchArea || !isSearchAreaRectVisible) {
+        return;
+    }
+
+    boundsRect = new google.maps.Rectangle({
+        strokeColor: "#0000FF",
+        strokeOpacity: 0.5,
+        strokeWeight: 2,
+        fillOpacity: 0,
+        map: map,
+        bounds: currentSearchArea,
+        clickable: false,
+        zIndex: 1
+    });
+}
+
+function refreshTownBoundaryVisibilityState() {
+    applyTownBoundaryStyles();
+
+    if (!hasLoadedTownBoundaryData()) {
+        if (townBoundaryDataStatus === "loading") {
+            setTownBoundaryStatus("町丁境界: データ読込中...", "warning");
+            return;
+        }
+
+        if (townBoundaryDataStatus === "unavailable") {
+            setTownBoundaryStatus("町丁境界: 対応データなし", "warning");
+            return;
+        }
+
+        if (townBoundaryDataStatus === "error") {
+            setTownBoundaryStatus("町丁境界: 読込失敗", "warning");
+            return;
+        }
+
+        setTownBoundaryStatus("町丁境界: 未読込");
+        return;
+    }
+
+    if (!selectedTownBoundaryKeyCodes.size) {
+        setTownBoundaryStatus("町丁境界: 待機中");
+        return;
+    }
+
+    if (!isTownBoundaryVisible) {
+        setTownBoundaryStatus(`町丁境界: ${currentTownBoundaryLabel || "一致あり"} 非表示`, "warning");
+        return;
+    }
+
+    setTownBoundaryStatus(`町丁境界: ${currentTownBoundaryLabel || "一致あり"} を表示中`, "active");
+}
+
+function toggleTownBoundaryVisibility() {
+    isTownBoundaryVisible = !isTownBoundaryVisible;
+    localStorage.setItem(STORAGE_KEY_TOWN_BOUNDARY_VISIBLE, String(isTownBoundaryVisible));
+    updateOverlayVisibilityDisplay();
+    refreshTownBoundaryVisibilityState();
+}
+
+function toggleSearchAreaRectVisibility() {
+    isSearchAreaRectVisible = !isSearchAreaRectVisible;
+    localStorage.setItem(STORAGE_KEY_SEARCH_AREA_RECT_VISIBLE, String(isSearchAreaRectVisible));
+    updateOverlayVisibilityDisplay();
+    renderBoundsRect();
+}
+
+function updateExperimentalBoundaryUI() {
+    const toggle = document.getElementById("experimental-boundary-status");
+    const note = document.getElementById("experimental-boundary-note");
+    const mapIdInput = document.getElementById("experimental-map-id-input");
+
+    if (toggle) {
+        toggle.textContent = isExperimentalBoundaryEnabled ? "ON" : "OFF";
+        toggle.classList.toggle("is-on", isExperimentalBoundaryEnabled);
+        toggle.classList.toggle("is-off", !isExperimentalBoundaryEnabled);
+    }
+
+    if (mapIdInput) {
+        mapIdInput.value = experimentalMapId;
+    }
+
+    if (!note) return;
+
+    if (!isExperimentalBoundaryEnabled) {
+        note.textContent = "実験機能は OFF です。必要なときだけ ON にしてください。";
+        setExperimentalBoundaryStatus("境界ポリゴン: OFF");
+        return;
+    }
+
+    if (!experimentalMapId) {
+        note.textContent = "Map ID が未設定です。Cloud Console で作成した Map ID を保存してから使ってください。";
+        setExperimentalBoundaryStatus("境界ポリゴン: Map ID 未設定", "warning");
+        return;
+    }
+
+    note.textContent = "設定変更後は再読み込みして、Map ID 側で Postal Code と Locality の境界レイヤーを有効にしてください。";
+    setExperimentalBoundaryStatus("境界ポリゴン: 待機中", "warning");
+}
+
+function reloadForExperimentalBoundaryChange() {
+    location.reload();
+}
+
+function toggleExperimentalBoundaryMode() {
+    isExperimentalBoundaryEnabled = !isExperimentalBoundaryEnabled;
+    localStorage.setItem(STORAGE_KEY_EXPERIMENTAL_BOUNDARIES, String(isExperimentalBoundaryEnabled));
+    updateExperimentalBoundaryUI();
+    reloadForExperimentalBoundaryChange();
+}
+
+function saveExperimentalMapId() {
+    const input = document.getElementById("experimental-map-id-input");
+    experimentalMapId = input ? input.value.trim() : "";
+    localStorage.setItem(STORAGE_KEY_EXPERIMENTAL_MAP_ID, experimentalMapId);
+    updateExperimentalBoundaryUI();
+
+    if (isExperimentalBoundaryEnabled) {
+        reloadForExperimentalBoundaryChange();
+    }
+}
+
+function applySavedSidebarWidth() {
+    const clampedWidth = Math.min(Math.max(sidebarWidth, 220), Math.floor(window.innerWidth * 0.48) || 520);
+    sidebarWidth = clampedWidth;
+    document.documentElement.style.setProperty("--sidebar-width", `${clampedWidth}px`);
+}
+
+function initializeSidebarResize() {
+    const sidebar = document.getElementById("list-sidebar");
+    const resizer = document.getElementById("list-sidebar-resizer");
+    if (!sidebar || !resizer) return;
+
+    let startX = 0;
+    let startWidth = sidebarWidth;
+
+    const onPointerMove = (event) => {
+        const maxWidth = Math.max(220, Math.floor(window.innerWidth * 0.48));
+        const nextWidth = Math.min(Math.max(startWidth + (event.clientX - startX), 220), maxWidth);
+        sidebarWidth = nextWidth;
+        document.documentElement.style.setProperty("--sidebar-width", `${nextWidth}px`);
+    };
+
+    const onPointerUp = () => {
+        sidebar.classList.remove("is-resizing");
+        localStorage.setItem(STORAGE_KEY_SIDEBAR_WIDTH, String(sidebarWidth));
+        document.removeEventListener("pointermove", onPointerMove);
+        document.removeEventListener("pointerup", onPointerUp);
+        setTimeout(() => { if (map) google.maps.event.trigger(map, "resize"); }, 100);
+    };
+
+    resizer.addEventListener("pointerdown", (event) => {
+        if (window.innerWidth <= 960) return;
+        startX = event.clientX;
+        startWidth = sidebarWidth;
+        sidebar.classList.add("is-resizing");
+        document.addEventListener("pointermove", onPointerMove);
+        document.addEventListener("pointerup", onPointerUp);
+    });
+
+    window.addEventListener("resize", () => {
+        applySavedSidebarWidth();
+    });
+}
+
 function loadGoogleMapsScript(key) {
     if (window.google && window.google.maps) return;
 
@@ -173,7 +496,7 @@ window.initMap = function () {
 
     const mapElement = document.getElementById("map");
     if (mapElement) {
-        map = new google.maps.Map(mapElement, {
+        const mapOptions = {
             zoom: 15,
             center: initialPos,
             mapTypeId: 'roadmap',
@@ -181,7 +504,13 @@ window.initMap = function () {
             clickableIcons: false,
             fullscreenControl: false,
             mapTypeControl: true
-        });
+        };
+
+        if (isExperimentalBoundaryEnabled && experimentalMapId) {
+            mapOptions.mapId = experimentalMapId;
+        }
+
+        map = new google.maps.Map(mapElement, mapOptions);
 
         map.addListener("click", (e) => {
             placeMarkerAndCircle(e.latLng);
@@ -190,11 +519,22 @@ window.initMap = function () {
 
     updateRefMap("東京都千代田区富士見2丁目");
 
+    refreshTownBoundaryVisibilityState();
+    ensureExperimentalBoundaryLayers();
+
     document.addEventListener('click', function (event) {
-        const menu = document.getElementById("settings-menu");
-        const btn = document.getElementById("settings-btn");
-        if (menu && btn && !btn.contains(event.target) && !menu.contains(event.target)) {
-            menu.classList.remove('show');
+        const settingsMenu = document.getElementById("settings-menu");
+        const settingsBtn = document.getElementById("settings-btn");
+        const docsMenu = document.getElementById("docs-menu");
+        const docsBtn = document.getElementById("docs-btn");
+
+        const clickedSettings = settingsMenu && settingsBtn
+            && (settingsBtn.contains(event.target) || settingsMenu.contains(event.target));
+        const clickedDocs = docsMenu && docsBtn
+            && (docsBtn.contains(event.target) || docsMenu.contains(event.target));
+
+        if (!clickedSettings && !clickedDocs) {
+            closeToolbarMenus();
         }
     });
 };
@@ -202,6 +542,555 @@ window.initMap = function () {
 /* =========================================
    メイン機能
    ========================================= */
+function toHalfWidthDigits(value) {
+    return value.replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xFEE0));
+}
+
+function kanjiNumberToInt(input) {
+    const digits = {
+        "〇": 0,
+        "零": 0,
+        "一": 1,
+        "二": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9
+    };
+    const units = {
+        "十": 10,
+        "百": 100,
+        "千": 1000
+    };
+
+    let total = 0;
+    let current = 0;
+
+    for (const char of String(input || "")) {
+        if (Object.prototype.hasOwnProperty.call(digits, char)) {
+            current = digits[char];
+            continue;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(units, char)) {
+            total += (current || 1) * units[char];
+            current = 0;
+        }
+    }
+
+    return total + current;
+}
+
+function normalizeChomeNumbers(value) {
+    return toHalfWidthDigits(String(value || "").trim()).replace(/([〇零一二三四五六七八九十百千0-9]+)丁目/g, (_, rawNumber) => {
+        if (/^[0-9]+$/.test(rawNumber)) {
+            return `${Number.parseInt(rawNumber, 10)}丁目`;
+        }
+
+        return `${kanjiNumberToInt(rawNumber)}丁目`;
+    });
+}
+
+function normalizeTownBoundaryText(value) {
+    return normalizeChomeNumbers(String(value || ""))
+        .replace(/\s+/g, "")
+        .replace(/ヶ/g, "ケ")
+        .replace(/之/g, "の")
+        .trim();
+}
+
+function hasLoadedTownBoundaryData() {
+    return Boolean(activeTownBoundaryData && Array.isArray(activeTownBoundaryData.features));
+}
+
+function clearTownBoundaryLayer() {
+    if (townBoundaryLayer) {
+        townBoundaryLayer.setMap(null);
+        townBoundaryLayer = null;
+    }
+
+    townBoundaryLayerDatasetKey = "";
+}
+
+function applyTownBoundaryDataset(definition, data) {
+    const nextDatasetKey = definition && definition.key ? String(definition.key) : "";
+    const datasetChanged = nextDatasetKey !== activeTownBoundaryDatasetKey;
+
+    activeTownBoundaryData = data;
+    activeTownBoundaryDatasetKey = nextDatasetKey;
+    townBoundaryDataStatus = hasLoadedTownBoundaryData() ? "ready" : "unloaded";
+
+    if (datasetChanged) {
+        clearTownBoundarySelection(true);
+        clearTownBoundaryLayer();
+    }
+}
+
+function resetTownBoundaryData(status = "unloaded") {
+    activeTownBoundaryData = null;
+    activeTownBoundaryDatasetKey = "";
+    townBoundaryDataStatus = status;
+    clearTownBoundarySelection(true);
+    clearTownBoundaryLayer();
+}
+
+function getTownBoundaryStyle(feature) {
+    const keyCode = String(feature.getProperty("key_code") || "");
+
+    if (!isTownBoundaryVisible || !selectedTownBoundaryKeyCodes.has(keyCode)) {
+        return {
+            clickable: false,
+            visible: false,
+            strokeOpacity: 0,
+            strokeWeight: 0,
+            fillOpacity: 0
+        };
+    }
+
+    return {
+        clickable: false,
+        visible: true,
+        strokeColor: "#D35400",
+        strokeOpacity: 0.95,
+        strokeWeight: 3,
+        fillColor: "#F39C12",
+        fillOpacity: 0.18,
+        zIndex: 4
+    };
+}
+
+function applyTownBoundaryStyles() {
+    if (!townBoundaryLayer) return;
+    townBoundaryLayer.setStyle((feature) => getTownBoundaryStyle(feature));
+}
+
+function clearTownBoundarySelection(keepStatus = false) {
+    selectedTownBoundaryKeyCodes = new Set();
+    currentTownBoundaryLabel = "";
+    applyTownBoundaryStyles();
+
+    if (!keepStatus) {
+        refreshTownBoundaryVisibilityState();
+    }
+}
+
+function initializeTownBoundaryLayer() {
+    if (!map) return false;
+
+    if (!hasLoadedTownBoundaryData()) {
+        refreshTownBoundaryVisibilityState();
+        return false;
+    }
+
+    if (townBoundaryLayer && townBoundaryLayerDatasetKey === activeTownBoundaryDatasetKey) {
+        return true;
+    }
+
+    clearTownBoundaryLayer();
+    townBoundaryLayer = new google.maps.Data({ map: map });
+    townBoundaryLayer.addGeoJson(activeTownBoundaryData);
+    townBoundaryLayerDatasetKey = activeTownBoundaryDatasetKey;
+    applyTownBoundaryStyles();
+    refreshTownBoundaryVisibilityState();
+    return true;
+}
+
+function buildTownBoundaryCityCandidates(result) {
+    const locality = getAddressComponent(result, "locality");
+    const adminLevel2 = getAddressComponent(result, "administrative_area_level_2");
+    const ward = getAddressComponent(result, "sublocality_level_1") || getAddressComponent(result, "administrative_area_level_3");
+    const candidates = new Set();
+
+    [locality, adminLevel2].filter(Boolean).forEach((baseName) => {
+        const normalizedBase = normalizeTownBoundaryText(baseName);
+        if (normalizedBase) candidates.add(normalizedBase);
+
+        if (ward) {
+            const combined = normalizeTownBoundaryText(`${baseName}${ward}`);
+            if (combined) candidates.add(combined);
+        }
+    });
+
+    return candidates;
+}
+
+function buildTownBoundarySearchTexts(result) {
+    const addressInput = document.getElementById("address-input");
+    const candidates = new Set();
+    const sourceValues = [
+        addressInput ? addressInput.value : "",
+        result && result.formatted_address ? result.formatted_address : ""
+    ];
+
+    sourceValues.forEach((value) => {
+        const normalized = normalizeTownBoundaryText(value);
+        if (normalized) candidates.add(normalized);
+    });
+
+    return candidates;
+}
+
+function buildTownBoundaryTownSearchTexts(cityCandidates, searchTexts) {
+    const candidates = new Set();
+
+    if (!cityCandidates.size) {
+        return candidates;
+    }
+
+    searchTexts.forEach((text) => {
+        cityCandidates.forEach((cityName) => {
+            const cityIndex = text.indexOf(cityName);
+
+            if (cityIndex < 0) {
+                return;
+            }
+
+            const townName = text.slice(cityIndex + cityName.length);
+
+            if (townName) {
+                candidates.add(townName);
+            }
+        });
+    });
+
+    return candidates;
+}
+
+function findTownBoundaryMatches(result) {
+    if (!hasLoadedTownBoundaryData()) {
+        return [];
+    }
+
+    const cityCandidates = buildTownBoundaryCityCandidates(result);
+    const searchTexts = buildTownBoundarySearchTexts(result);
+    const townSearchTexts = buildTownBoundaryTownSearchTexts(cityCandidates, searchTexts);
+
+    if (!searchTexts.size) {
+        return [];
+    }
+
+    let bestScore = 0;
+    let matches = [];
+
+    activeTownBoundaryData.features.forEach((feature) => {
+        const props = feature.properties || {};
+        const cityNameNormalized = String(props.city_name_normalized || "");
+
+        if (cityCandidates.size && cityNameNormalized && !cityCandidates.has(cityNameNormalized)) {
+            return;
+        }
+
+        const candidateNames = [
+            String(props.full_name_normalized || ""),
+            String(props.full_name_arabic_normalized || ""),
+            cityNameNormalized && props.town_name_normalized ? `${cityNameNormalized}${props.town_name_normalized}` : "",
+            cityNameNormalized && props.town_name_arabic_normalized ? `${cityNameNormalized}${props.town_name_arabic_normalized}` : ""
+        ].filter(Boolean);
+        const townCandidateNames = [
+            String(props.town_name_normalized || ""),
+            String(props.town_name_arabic_normalized || "")
+        ].filter(Boolean);
+
+        let featureScore = 0;
+
+        searchTexts.forEach((text) => {
+            candidateNames.forEach((candidateName) => {
+                if (text.includes(candidateName)) {
+                    featureScore = Math.max(featureScore, 10000 + candidateName.length);
+                }
+            });
+        });
+
+        townSearchTexts.forEach((townText) => {
+            if (townText.length < 3) {
+                return;
+            }
+
+            townCandidateNames.forEach((candidateName) => {
+                if (candidateName.includes(townText)) {
+                    featureScore = Math.max(featureScore, 5000 + townText.length);
+                }
+            });
+        });
+
+        if (!featureScore) {
+            return;
+        }
+
+        if (featureScore > bestScore) {
+            bestScore = featureScore;
+            matches = [feature];
+            return;
+        }
+
+        if (featureScore === bestScore) {
+            matches.push(feature);
+        }
+    });
+
+    return matches;
+}
+
+function updateTownBoundaryOverlay(result, matchedFeatures = null) {
+    if (!initializeTownBoundaryLayer()) {
+        return false;
+    }
+
+    const matches = Array.isArray(matchedFeatures) ? matchedFeatures : findTownBoundaryMatches(result);
+    clearTownBoundarySelection(true);
+
+    if (!matches.length) {
+        setTownBoundaryStatus("町丁境界: 該当なし", "warning");
+        return false;
+    }
+
+    selectedTownBoundaryKeyCodes = new Set(matches.map((feature) => String(feature.properties && feature.properties.key_code ? feature.properties.key_code : "")));
+    applyTownBoundaryStyles();
+
+    const names = [...new Set(matches.map((feature) => {
+        const props = feature.properties || {};
+        return String(props.full_name_arabic || props.full_name || "");
+    }).filter(Boolean))];
+    currentTownBoundaryLabel = names.slice(0, 2).join(" / ");
+    refreshTownBoundaryVisibilityState();
+    return true;
+}
+
+function clearExperimentalBoundaryLayers() {
+    EXPERIMENTAL_BOUNDARY_CONFIG.forEach((config) => {
+        const layer = experimentalBoundaryLayers[config.key];
+        if (layer) layer.style = null;
+        experimentalBoundarySelections[config.key] = new Set();
+    });
+}
+
+function ensureExperimentalBoundaryLayers() {
+    if (!map) return false;
+
+    if (!isExperimentalBoundaryEnabled) {
+        clearExperimentalBoundaryLayers();
+        setExperimentalBoundaryStatus("境界ポリゴン: OFF");
+        return false;
+    }
+
+    if (!experimentalMapId) {
+        clearExperimentalBoundaryLayers();
+        setExperimentalBoundaryStatus("境界ポリゴン: Map ID 未設定", "warning");
+        return false;
+    }
+
+    if (typeof map.getFeatureLayer !== "function" || !google.maps.FeatureType) {
+        clearExperimentalBoundaryLayers();
+        setExperimentalBoundaryStatus("境界ポリゴン: この地図では未対応", "warning");
+        return false;
+    }
+
+    let availableCount = 0;
+
+    EXPERIMENTAL_BOUNDARY_CONFIG.forEach((config) => {
+        const featureType = google.maps.FeatureType[config.featureType];
+        if (!featureType) return;
+
+        const layer = map.getFeatureLayer(featureType);
+        experimentalBoundaryLayers[config.key] = layer;
+        experimentalBoundarySelections[config.key] = experimentalBoundarySelections[config.key] || new Set();
+
+        if (layer && layer.isAvailable) {
+            availableCount += 1;
+        }
+    });
+
+    if (!availableCount) {
+        clearExperimentalBoundaryLayers();
+        setExperimentalBoundaryStatus("境界ポリゴン: Map ID 側で境界レイヤー未有効", "warning");
+        return false;
+    }
+
+    return true;
+}
+
+function applyExperimentalBoundaryStyles() {
+    EXPERIMENTAL_BOUNDARY_CONFIG.forEach((config) => {
+        const layer = experimentalBoundaryLayers[config.key];
+        const placeIds = experimentalBoundarySelections[config.key];
+
+        if (!layer || !layer.isAvailable || !(placeIds instanceof Set) || placeIds.size === 0) {
+            if (layer) layer.style = null;
+            return;
+        }
+
+        layer.style = (options) => {
+            const placeId = options && options.feature ? options.feature.placeId : null;
+            if (!placeIds.has(placeId)) return null;
+
+            return {
+                strokeColor: config.color,
+                strokeOpacity: config.strokeOpacity,
+                strokeWeight: config.strokeWeight,
+                fillColor: config.color,
+                fillOpacity: config.fillOpacity
+            };
+        };
+    });
+}
+
+function getAddressComponent(result, type) {
+    const components = result && Array.isArray(result.address_components) ? result.address_components : [];
+    const match = components.find((component) => Array.isArray(component.types) && component.types.includes(type));
+    return match ? match.long_name : "";
+}
+
+async function ensureTownBoundaryDataForResult(result) {
+    const loader = window.TownBoundaryLoader;
+    if (!loader || typeof loader.ensureDatasetForResult !== "function") {
+        resetTownBoundaryData("error");
+        refreshTownBoundaryVisibilityState();
+        return { available: false, reason: "loader_unavailable" };
+    }
+
+    const resolvedDefinition = typeof loader.resolveDatasetDefinition === "function"
+        ? loader.resolveDatasetDefinition(result)
+        : null;
+
+    if (!resolvedDefinition) {
+        resetTownBoundaryData("unavailable");
+        refreshTownBoundaryVisibilityState();
+        return { available: false, reason: "not_configured" };
+    }
+
+    if (resolvedDefinition.key === activeTownBoundaryDatasetKey && hasLoadedTownBoundaryData()) {
+        initializeTownBoundaryLayer();
+        return {
+            available: true,
+            definition: resolvedDefinition,
+            data: activeTownBoundaryData,
+            cached: true
+        };
+    }
+
+    townBoundaryDataStatus = "loading";
+    refreshTownBoundaryVisibilityState();
+
+    try {
+        const loaded = await loader.ensureDatasetForResult(result);
+        if (!loaded || !loaded.definition || !loaded.data) {
+            resetTownBoundaryData("unavailable");
+            refreshTownBoundaryVisibilityState();
+            return { available: false, reason: "not_configured" };
+        }
+
+        applyTownBoundaryDataset(loaded.definition, loaded.data);
+        initializeTownBoundaryLayer();
+        return {
+            available: true,
+            definition: loaded.definition,
+            data: loaded.data,
+            cached: false
+        };
+    } catch (error) {
+        console.error("Town boundary dataset load failed.", error);
+        resetTownBoundaryData("error");
+        refreshTownBoundaryVisibilityState();
+        return { available: false, reason: "load_failed", error };
+    }
+}
+
+function buildExperimentalBoundaryQueries(result) {
+    const country = getAddressComponent(result, "country");
+    const adminAreaLevel1 = getAddressComponent(result, "administrative_area_level_1");
+    const locality = getAddressComponent(result, "locality") || getAddressComponent(result, "administrative_area_level_2");
+    const postalCode = getAddressComponent(result, "postal_code");
+    const queries = [];
+
+    if (postalCode) {
+        queries.push({
+            key: "postal_code",
+            textQuery: [postalCode, country].filter(Boolean).join(", ")
+        });
+    }
+
+    if (locality) {
+        queries.push({
+            key: "locality",
+            textQuery: [locality, adminAreaLevel1, country].filter(Boolean).join(", ")
+        });
+    }
+
+    return queries;
+}
+
+async function lookupExperimentalBoundaryPlaceId(config, textQuery, locationBias) {
+    const { Place } = await google.maps.importLibrary("places");
+    const request = {
+        textQuery,
+        fields: ["id"],
+        language: "ja",
+        region: "JP"
+    };
+
+    if (locationBias) {
+        request.locationBias = locationBias;
+    }
+
+    const { places } = await Place.searchByText(request);
+    return Array.isArray(places) && places[0] && places[0].id ? places[0].id : null;
+}
+
+async function updateExperimentalBoundaryOverlays(result) {
+    lastGeocodeResult = result;
+
+    if (!ensureExperimentalBoundaryLayers()) {
+        return;
+    }
+
+    clearExperimentalBoundaryLayers();
+
+    const queries = buildExperimentalBoundaryQueries(result);
+    if (!queries.length) {
+        setExperimentalBoundaryStatus("境界ポリゴン: 検索候補なし", "warning");
+        return;
+    }
+
+    const locationBias = result && result.geometry ? result.geometry.location : null;
+    const shownLabels = [];
+
+    try {
+        for (const query of queries) {
+            const config = EXPERIMENTAL_BOUNDARY_CONFIG.find((item) => item.key === query.key);
+            const layer = config ? experimentalBoundaryLayers[config.key] : null;
+
+            if (!config || !layer || !layer.isAvailable) {
+                continue;
+            }
+
+            const placeId = await lookupExperimentalBoundaryPlaceId(config, query.textQuery, locationBias);
+            if (!placeId) {
+                continue;
+            }
+
+            experimentalBoundarySelections[config.key].add(placeId);
+            shownLabels.push(config.label);
+        }
+    } catch (error) {
+        console.error("Experimental boundary lookup failed.", error);
+        clearExperimentalBoundaryLayers();
+        const detail = error && error.message ? ` (${error.message})` : "";
+        setExperimentalBoundaryStatus(`境界ポリゴン: Places API (New) 設定要確認${detail}`, "warning");
+        return;
+    }
+
+    applyExperimentalBoundaryStyles();
+
+    if (shownLabels.length) {
+        setExperimentalBoundaryStatus(`境界ポリゴン: ${shownLabels.join(" / ")} を表示中`, "active");
+    } else {
+        setExperimentalBoundaryStatus("境界ポリゴン: 該当境界なし", "warning");
+    }
+}
+
 function placeMarkerAndCircle(latLng) {
     resetImpossibleState();
 
@@ -216,6 +1105,7 @@ function placeMarkerAndCircle(latLng) {
     });
 
     marker.addListener("dragend", (e) => {
+        resetImpossibleState();
         updateCirclePosition(e.latLng);
         generateOutput(e.latLng);
         const lat = e.latLng.lat();
@@ -238,6 +1128,357 @@ function drawCircle(center) {
 
 function updateCirclePosition(latLng) {
     if (circle) circle.setCenter(latLng);
+}
+
+function getRadiusLabel(radius) {
+    return radius >= 1000 ? `${radius / 1000}km` : `${radius}m`;
+}
+
+function choosePresetRadius(distance) {
+    for (const radius of RADIUS_PRESETS) {
+        if (radius >= distance) {
+            return radius;
+        }
+    }
+
+    return 1000;
+}
+
+function clampNumber(value, min, max) {
+    return Math.min(Math.max(value, min), max);
+}
+
+function isCoordinatePair(pair) {
+    return Array.isArray(pair)
+        && pair.length >= 2
+        && typeof pair[0] === "number"
+        && typeof pair[1] === "number";
+}
+
+function coordinatesAreSame(a, b) {
+    return isCoordinatePair(a) && isCoordinatePair(b) && a[0] === b[0] && a[1] === b[1];
+}
+
+function collectGeoJsonRings(geometry) {
+    if (!geometry || !Array.isArray(geometry.coordinates)) {
+        return [];
+    }
+
+    if (geometry.type === "Polygon") {
+        return geometry.coordinates.filter((ring) => Array.isArray(ring) && ring.every(isCoordinatePair));
+    }
+
+    if (geometry.type === "MultiPolygon") {
+        return geometry.coordinates.flatMap((polygon) => (
+            Array.isArray(polygon)
+                ? polygon.filter((ring) => Array.isArray(ring) && ring.every(isCoordinatePair))
+                : []
+        ));
+    }
+
+    return [];
+}
+
+function getCoordinatePairKey(pair) {
+    return `${pair[0]},${pair[1]}`;
+}
+
+function collectTownBoundaryVertices(matches) {
+    const vertices = [];
+    const seen = new Set();
+    let ringCount = 0;
+
+    matches.forEach((feature) => {
+        const rings = collectGeoJsonRings(feature && feature.geometry);
+        ringCount += rings.length;
+
+        rings.forEach((ring) => {
+            const limit = coordinatesAreSame(ring[0], ring[ring.length - 1])
+                ? Math.max(ring.length - 1, 0)
+                : ring.length;
+
+            for (let i = 0; i < limit; i += 1) {
+                const pair = ring[i];
+                if (!isCoordinatePair(pair)) continue;
+
+                const key = getCoordinatePairKey(pair);
+                if (seen.has(key)) continue;
+                seen.add(key);
+                vertices.push({ lng: pair[0], lat: pair[1] });
+            }
+        });
+    });
+
+    return { vertices, ringCount };
+}
+
+function getLocalProjectionOrigin(vertices) {
+    const sums = vertices.reduce((acc, vertex) => {
+        acc.lat += vertex.lat;
+        acc.lng += vertex.lng;
+        return acc;
+    }, { lat: 0, lng: 0 });
+
+    return {
+        lat: sums.lat / vertices.length,
+        lng: sums.lng / vertices.length
+    };
+}
+
+function projectLatLngToLocalMeters(lat, lng, origin) {
+    const latRad = lat * Math.PI / 180;
+    const lngRad = lng * Math.PI / 180;
+    const originLatRad = origin.lat * Math.PI / 180;
+    const originLngRad = origin.lng * Math.PI / 180;
+
+    return {
+        x: EARTH_RADIUS_METERS * (lngRad - originLngRad) * Math.cos(originLatRad),
+        y: EARTH_RADIUS_METERS * (latRad - originLatRad)
+    };
+}
+
+function unprojectLocalMetersToLatLng(point, origin) {
+    const originLatRad = origin.lat * Math.PI / 180;
+    const lat = origin.lat + (point.y / EARTH_RADIUS_METERS) * 180 / Math.PI;
+    const lng = origin.lng + (point.x / (EARTH_RADIUS_METERS * Math.cos(originLatRad))) * 180 / Math.PI;
+    return new google.maps.LatLng(lat, lng);
+}
+
+function shuffleArray(items) {
+    const copy = [...items];
+    for (let i = copy.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy;
+}
+
+function getSquaredDistance(a, b) {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return dx * dx + dy * dy;
+}
+
+function isPointInsideCircle(point, circle) {
+    if (!circle) return false;
+    return getSquaredDistance(point, circle) <= (circle.r * circle.r) + 1e-6;
+}
+
+function makeCircleFromTwoPoints(a, b) {
+    const center = {
+        x: (a.x + b.x) / 2,
+        y: (a.y + b.y) / 2
+    };
+
+    return {
+        ...center,
+        r: Math.sqrt(getSquaredDistance(a, center)),
+        supportSize: 2
+    };
+}
+
+function makeCircleFromThreePoints(a, b, c) {
+    const d = 2 * (
+        a.x * (b.y - c.y)
+        + b.x * (c.y - a.y)
+        + c.x * (a.y - b.y)
+    );
+
+    if (Math.abs(d) < 1e-9) {
+        return null;
+    }
+
+    const ux = (
+        (a.x * a.x + a.y * a.y) * (b.y - c.y)
+        + (b.x * b.x + b.y * b.y) * (c.y - a.y)
+        + (c.x * c.x + c.y * c.y) * (a.y - b.y)
+    ) / d;
+    const uy = (
+        (a.x * a.x + a.y * a.y) * (c.x - b.x)
+        + (b.x * b.x + b.y * b.y) * (a.x - c.x)
+        + (c.x * c.x + c.y * c.y) * (b.x - a.x)
+    ) / d;
+
+    const center = { x: ux, y: uy };
+    return {
+        ...center,
+        r: Math.sqrt(getSquaredDistance(a, center)),
+        supportSize: 3
+    };
+}
+
+function crossProduct(a, b, c) {
+    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+function makeCircleWithTwoBoundaryPoints(points, p, q) {
+    let circle = makeCircleFromTwoPoints(p, q);
+    let left = null;
+    let right = null;
+
+    points.forEach((r) => {
+        if (isPointInsideCircle(r, circle)) return;
+
+        const cross = crossProduct(p, q, r);
+        const candidate = makeCircleFromThreePoints(p, q, r);
+        if (!candidate) return;
+
+        if (cross > 0) {
+            if (!left || crossProduct(p, q, candidate) > crossProduct(p, q, left)) {
+                left = candidate;
+            }
+        } else if (cross < 0) {
+            if (!right || crossProduct(p, q, candidate) < crossProduct(p, q, right)) {
+                right = candidate;
+            }
+        }
+    });
+
+    if (!left && !right) return circle;
+    if (!left) return right;
+    if (!right) return left;
+    return left.r <= right.r ? left : right;
+}
+
+function computeMinimumEnclosingCircle(points) {
+    if (!points.length) return null;
+
+    let circle = null;
+    const shuffled = shuffleArray(points);
+
+    shuffled.forEach((point, i) => {
+        if (circle && isPointInsideCircle(point, circle)) {
+            return;
+        }
+
+        circle = { x: point.x, y: point.y, r: 0, supportSize: 1 };
+
+        for (let j = 0; j < i; j += 1) {
+            const q = shuffled[j];
+            if (isPointInsideCircle(q, circle)) continue;
+
+            circle = makeCircleFromTwoPoints(point, q);
+
+            for (let k = 0; k < j; k += 1) {
+                const r = shuffled[k];
+                if (isPointInsideCircle(r, circle)) continue;
+                circle = makeCircleWithTwoBoundaryPoints(shuffled.slice(0, j + 1), point, q);
+            }
+        }
+    });
+
+    return circle;
+}
+
+function buildBoundsFromVertices(vertices) {
+    const bounds = new google.maps.LatLngBounds();
+    vertices.forEach((vertex) => {
+        bounds.extend(new google.maps.LatLng(vertex.lat, vertex.lng));
+    });
+    return bounds;
+}
+
+function getTownBoundaryAutoRadiusResult(location, matches) {
+    if (!Array.isArray(matches) || !matches.length) {
+        return null;
+    }
+
+    const { vertices, ringCount } = collectTownBoundaryVertices(matches);
+    if (!vertices.length) {
+        return null;
+    }
+
+    const projectionOrigin = getLocalProjectionOrigin(vertices);
+    const projectedPoints = vertices.map((vertex) => ({
+        ...vertex,
+        ...projectLatLngToLocalMeters(vertex.lat, vertex.lng, projectionOrigin)
+    }));
+
+    const minCircle = computeMinimumEnclosingCircle(projectedPoints);
+    if (!minCircle) {
+        return null;
+    }
+
+    const center = unprojectLocalMetersToLatLng(minCircle, projectionOrigin);
+    let maxDistance = 0;
+    let farthestVertex = null;
+
+    vertices.forEach((vertex) => {
+        const distance = google.maps.geometry.spherical.computeDistanceBetween(
+            center,
+            new google.maps.LatLng(vertex.lat, vertex.lng)
+        );
+        if (distance > maxDistance) {
+            maxDistance = distance;
+            farthestVertex = vertex;
+        }
+    });
+
+    const roundedDistance = Math.round(maxDistance);
+    const stats = {
+        features: matches.length,
+        rings: ringCount,
+        vertices: vertices.length,
+        supportSize: minCircle.supportSize || 0,
+        centerShift: location ? Math.round(google.maps.geometry.spherical.computeDistanceBetween(location, center)) : 0,
+        farthestVertex
+    };
+    return {
+        center,
+        distance: roundedDistance,
+        selectedRadius: choosePresetRadius(roundedDistance),
+        isImpossible: roundedDistance > 1000,
+        bounds: buildBoundsFromVertices(vertices),
+        stats: {
+            ...stats
+        }
+    };
+}
+
+function getSearchAreaAutoRadiusResult(location, searchArea) {
+    if (!location || !searchArea) {
+        return null;
+    }
+
+    const distance = Math.round(
+        google.maps.geometry.spherical.computeDistanceBetween(location, searchArea.getNorthEast())
+    );
+
+    return {
+        distance,
+        selectedRadius: choosePresetRadius(distance),
+        isImpossible: false
+    };
+}
+
+function getImpossibleOutputText() {
+    return "ジオ付与不可能（消防出動情報向けのメッセージです）";
+}
+
+function normalizeImpossibleButton() {
+    const impBtn = document.getElementById('impossible-btn');
+    if (!impBtn) return null;
+
+    if (impBtn.dataset.timer) {
+        clearTimeout(Number(impBtn.dataset.timer));
+        delete impBtn.dataset.timer;
+    }
+
+    impBtn.innerText = "不可";
+    impBtn.style.backgroundColor = "";
+    impBtn.style.border = "";
+    return impBtn;
+}
+
+function activateImpossibleSelection() {
+    document.querySelectorAll('.radius-btn').forEach(btn => btn.classList.remove('active'));
+    const impBtn = normalizeImpossibleButton();
+    if (impBtn) impBtn.classList.add('active');
+
+    const output = document.getElementById("output-text");
+    if (output) {
+        output.value = getImpossibleOutputText();
+    }
 }
 
 function setRadius(radius) {
@@ -265,15 +1506,13 @@ function setRadius(radius) {
 
 // 不可ボタン
 function setImpossible() {
-    document.querySelectorAll('.radius-btn').forEach(btn => btn.classList.remove('active'));
+    activateImpossibleSelection();
     const impBtn = document.getElementById('impossible-btn');
-    if (impBtn) impBtn.classList.add('active');
-
-    const text = "ジオ付与不可能（消防出動情報向けのメッセージです）";
-    document.getElementById("output-text").value = text;
+    const text = getImpossibleOutputText();
 
     navigator.clipboard.writeText(text).then(() => {
-        if (impBtn.dataset.timer) clearTimeout(impBtn.dataset.timer);
+        if (!impBtn) return;
+        if (impBtn.dataset.timer) clearTimeout(Number(impBtn.dataset.timer));
 
         impBtn.innerText = "コピー完了!";
         impBtn.style.backgroundColor = "#27ae60";
@@ -296,8 +1535,7 @@ function resetImpossibleState() {
     const impBtn = document.getElementById('impossible-btn');
     if (impBtn && impBtn.classList.contains('active')) {
         impBtn.classList.remove('active');
-        impBtn.innerText = "不可";
-        impBtn.style.backgroundColor = "";
+        normalizeImpossibleButton();
 
         const radiusBtns = document.querySelectorAll('.radius-group button:not(#impossible-btn)');
         radiusBtns.forEach(btn => {
@@ -316,75 +1554,122 @@ function geocodeAddress() {
     if (!address || !geocoder) return;
 
     if (calcDisplay) calcDisplay.innerText = "";
+    appendCalculationLog(`検索開始: ${address}`);
 
     QuotaManager.increment();
+    const requestToken = ++geocodeRequestToken;
 
-    geocoder.geocode({ 'address': address }, (results, status) => {
+    geocoder.geocode({ 'address': address }, async (results, status) => {
+        if (requestToken !== geocodeRequestToken) return;
+
         if (status === 'OK') {
             const result = results[0];
             const location = result.geometry.location;
+            lastGeocodeResult = result;
+            currentSearchArea = null;
 
             // 厳密な範囲(bounds)があれば優先
             const searchArea = result.geometry.bounds || result.geometry.viewport;
 
-            // ★修正: 広めの半径計算 (全体が入るようにする)
-            if (isAutoRadiusEnabled && searchArea) {
-                // 北東の「角」までの距離を測ることで、四角全体をカバーする
-                const corner = searchArea.getNorthEast();
-                const distance = Math.round(google.maps.geometry.spherical.computeDistanceBetween(location, corner));
+            const townBoundaryLoadResult = await ensureTownBoundaryDataForResult(result);
+            if (requestToken !== geocodeRequestToken) return;
 
-                const presets = [50, 100, 300, 500, 1000];
-                let bestRadius = 1000;
-
-                for (let r of presets) {
-                    if (r >= distance) {
-                        bestRadius = r;
-                        break;
-                    }
-                }
-                if (distance > 1000) bestRadius = 1000;
-
-                setRadius(bestRadius);
-
-                if (calcDisplay) {
-                    calcDisplay.innerText = `検出範囲(対角): ${distance}m → ${bestRadius}mを設定`;
-                }
-            } else {
-                if (calcDisplay && isAutoRadiusEnabled) {
-                    calcDisplay.innerText = "範囲データなし";
-                }
+            if (townBoundaryLoadResult.available && townBoundaryLoadResult.definition && !townBoundaryLoadResult.cached) {
+                appendCalculationLog(`町丁境界データ読込: ${townBoundaryLoadResult.definition.label || townBoundaryLoadResult.definition.key}`, "muted");
+            } else if (!townBoundaryLoadResult.available && townBoundaryLoadResult.reason === "not_configured") {
+                appendCalculationLog("町丁境界データなし: この地域は未対応です。", "muted");
+            } else if (!townBoundaryLoadResult.available && townBoundaryLoadResult.reason !== "loader_unavailable") {
+                appendCalculationLog("町丁境界データを使えないため、境界照合をスキップします。", "warning");
             }
 
-            placeMarkerAndCircle(location);
+            const townBoundaryMatches = townBoundaryLoadResult.available ? findTownBoundaryMatches(result) : [];
+            let autoRadiusResult = null;
+            let placementLocation = location;
+            let mapFocusBounds = searchArea;
+
+            if (isAutoRadiusEnabled) {
+                if (townBoundaryMatches.length) {
+                    const names = townBoundaryMatches
+                        .map((feature) => String(feature.properties && (feature.properties.full_name_arabic || feature.properties.full_name) || ""))
+                        .filter(Boolean);
+                    appendCalculationLog(`町丁境界一致: ${names.slice(0, 3).join(" / ")}${names.length > 3 ? " ほか" : ""}`);
+                } else {
+                    appendCalculationLog("町丁境界一致なし: bounds/viewport へフォールバック", "muted");
+                }
+
+                autoRadiusResult = getTownBoundaryAutoRadiusResult(location, townBoundaryMatches);
+
+                if (autoRadiusResult) {
+                    placementLocation = autoRadiusResult.center;
+                    mapFocusBounds = autoRadiusResult.bounds || searchArea;
+                    setRadius(autoRadiusResult.selectedRadius);
+                    const stats = autoRadiusResult.stats || {};
+                    appendCalculationLog(
+                        `町丁境界から最小包含円を計算: feature ${stats.features || 0}件 / ring ${stats.rings || 0} / vertex ${stats.vertices || 0} / 支持点 ${stats.supportSize || 0}`,
+                        "active"
+                    );
+                    appendCalculationLog(
+                        `中心補正: 初期ジオから ${stats.centerShift || 0}m 移動して最小包含円の中心を採用`,
+                        "active"
+                    );
+                    if (calcDisplay) {
+                        calcDisplay.innerText = autoRadiusResult.isImpossible
+                            ? `町丁境界(必要半径): ${autoRadiusResult.distance}m → 不可を選択 / 円は1kmを表示`
+                            : `町丁境界(必要半径): ${autoRadiusResult.distance}m → ${getRadiusLabel(autoRadiusResult.selectedRadius)}を設定`;
+                    }
+                    appendCalculationLog(
+                        autoRadiusResult.isImpossible
+                            ? `判定結果: 必要半径 ${autoRadiusResult.distance}m のため不可。円は 1km を表示`
+                            : `判定結果: 必要半径 ${autoRadiusResult.distance}m → ${getRadiusLabel(autoRadiusResult.selectedRadius)}`,
+                        autoRadiusResult.isImpossible ? "warning" : "active"
+                    );
+                } else if (searchArea) {
+                    autoRadiusResult = getSearchAreaAutoRadiusResult(location, searchArea);
+                    setRadius(autoRadiusResult.selectedRadius);
+                    if (calcDisplay) {
+                        calcDisplay.innerText = `検出範囲(対角): ${autoRadiusResult.distance}m → ${getRadiusLabel(autoRadiusResult.selectedRadius)}を設定`;
+                    }
+                    appendCalculationLog(
+                        `フォールバック判定: bounds/viewport の北東角まで ${autoRadiusResult.distance}m → ${getRadiusLabel(autoRadiusResult.selectedRadius)}`,
+                        "muted"
+                    );
+                } else if (calcDisplay) {
+                    calcDisplay.innerText = "範囲データなし";
+                    appendCalculationLog("範囲データがないため自動半径は更新されませんでした。", "warning");
+                }
+            } else {
+                appendCalculationLog("自動半径計算は OFF のため、現在の半径設定を維持します。", "muted");
+            }
+
+            placeMarkerAndCircle(placementLocation);
+            if (autoRadiusResult && autoRadiusResult.isImpossible) {
+                activateImpossibleSelection();
+            }
 
             if (marker) {
                 marker.setZIndex(google.maps.Marker.MAX_ZINDEX + 1);
             }
 
             // 青枠の描画
-            if (boundsRect) boundsRect.setMap(null);
-            if (searchArea) {
-                boundsRect = new google.maps.Rectangle({
-                    strokeColor: "#0000FF",
-                    strokeOpacity: 0.5,
-                    strokeWeight: 2,
-                    fillOpacity: 0,
-                    map: map,
-                    bounds: searchArea,
-                    clickable: false,
-                    zIndex: 1
-                });
-
-                map.fitBounds(searchArea);
-                map.panTo(location);
+            if (mapFocusBounds) {
+                currentSearchArea = mapFocusBounds;
+                renderBoundsRect();
+                map.fitBounds(mapFocusBounds);
+                map.panTo(placementLocation);
             } else {
-                map.setCenter(location);
+                renderBoundsRect();
+                map.setCenter(placementLocation);
                 map.setZoom(16);
             }
 
             updateRefMap(address);
+            const hasTownBoundaryMatch = updateTownBoundaryOverlay(result, townBoundaryMatches);
+            if (!hasTownBoundaryMatch) {
+                void updateExperimentalBoundaryOverlays(result);
+            }
 
         } else {
+            appendCalculationLog(`検索失敗: ${status}`, "warning");
             alert('検索できませんでした: ' + status);
         }
     });
@@ -417,9 +1702,11 @@ function copyToClipboard(triggerBtn) {
     navigator.clipboard.writeText(copyText.value).then(() => {
         if (btn.dataset.timer) clearTimeout(btn.dataset.timer);
 
-        const originalText = "コピー";
-        // ボタンIDで色を分岐
-        const originalBg = (btn.id === "header-copy-btn") ? "#e67e22" : "#e74c3c";
+        const originalText = btn.dataset.originalText || btn.innerText;
+        const originalBg = btn.dataset.originalBg || window.getComputedStyle(btn).backgroundColor;
+
+        btn.dataset.originalText = originalText;
+        btn.dataset.originalBg = originalBg;
 
         btn.innerText = "完了!";
         btn.style.backgroundColor = "#27ae60";
@@ -436,9 +1723,27 @@ function copyToClipboard(triggerBtn) {
     });
 }
 
+function closeToolbarMenus() {
+    const settingsMenu = document.getElementById("settings-menu");
+    const docsMenu = document.getElementById("docs-menu");
+    if (settingsMenu) settingsMenu.classList.remove("show");
+    if (docsMenu) docsMenu.classList.remove("show");
+}
+
+function toggleDocsMenu() {
+    const menu = document.getElementById("docs-menu");
+    const settingsMenu = document.getElementById("settings-menu");
+    if (!menu) return;
+    if (settingsMenu) settingsMenu.classList.remove("show");
+    menu.classList.toggle("show");
+}
+
 function toggleSettings() {
     const menu = document.getElementById("settings-menu");
-    if (menu) menu.classList.toggle("show");
+    const docsMenu = document.getElementById("docs-menu");
+    if (!menu) return;
+    if (docsMenu) docsMenu.classList.remove("show");
+    menu.classList.toggle("show");
 }
 
 function toggleLayout() {
@@ -461,8 +1766,12 @@ window.deleteApiKey = resetApiKey;
 
 function applyListModeVisibility() {
     const panel = document.getElementById("list-panel");
+    const sidebar = document.getElementById("list-sidebar");
     const toggle = document.getElementById("list-mode-toggle");
+    const actions = document.getElementById("list-actions");
     if (panel) panel.classList.toggle("hidden", !isListModeEnabled);
+    if (sidebar) sidebar.classList.toggle("list-mode-off", !isListModeEnabled);
+    if (actions) actions.classList.toggle("hidden", !isListModeEnabled);
     if (toggle) toggle.checked = isListModeEnabled;
 }
 
@@ -470,6 +1779,7 @@ function setListModeEnabled(enabled) {
     isListModeEnabled = Boolean(enabled);
     localStorage.setItem(STORAGE_KEY_LIST_MODE_ENABLED, String(isListModeEnabled));
     applyListModeVisibility();
+    setTimeout(() => { if (map) google.maps.event.trigger(map, "resize"); }, 100);
 }
 
 function parseTsvToRows(tsvText) {
@@ -594,11 +1904,30 @@ function findNextPendingRow(startIndex) {
     return -1;
 }
 
+function findPreviousAddressRow(startIndex) {
+    for (let i = Math.min(startIndex, listData.length - 1); i >= 0; i--) {
+        if (getCellValue(listData[i], addressColumnIndex)) return i;
+    }
+    return -1;
+}
+
 function setAddressToMainInput(address) {
     const input = document.getElementById("address-input");
     if (!input) return;
     input.value = address;
     if (geocoder) geocodeAddress();
+}
+
+function showListRow(rowIndex, message) {
+    if (rowIndex < 0 || !listData[rowIndex]) return false;
+
+    currentListRowIndex = rowIndex;
+    const address = getCellValue(listData[rowIndex], addressColumnIndex);
+    setAddressToMainInput(address);
+    updateListStatus();
+    persistListState();
+    setListMessage(message || `行${rowIndex + 1}の住所をセットしました。`, "success");
+    return true;
 }
 
 function showNextPendingAddress() {
@@ -618,12 +1947,24 @@ function showNextPendingAddress() {
         return;
     }
 
-    currentListRowIndex = nextIndex;
-    const address = getCellValue(listData[nextIndex], addressColumnIndex);
-    setAddressToMainInput(address);
-    updateListStatus();
-    persistListState();
-    setListMessage(`行${nextIndex + 1}の住所をセットしました。`, "success");
+    showListRow(nextIndex);
+}
+
+function showPreviousAddressRow() {
+    if (!listData.length) {
+        setListMessage("先に一覧を読み込んでください。", "error");
+        return;
+    }
+
+    const start = currentListRowIndex >= 0 ? currentListRowIndex - 1 : listData.length - 1;
+    const previousIndex = findPreviousAddressRow(start);
+
+    if (previousIndex === -1) {
+        setListMessage("これ以上戻れる住所行はありません。", "error");
+        return;
+    }
+
+    showListRow(previousIndex, `行${previousIndex + 1}に戻りました。必要に応じて編集して再反映してください。`);
 }
 
 function ensureRowLength(row, length) {
@@ -660,21 +2001,6 @@ function applyOutputAndMoveNext() {
     const applied = applyOutputToCurrentRow();
     if (!applied) return;
     showNextPendingAddress();
-}
-
-function copyUpdatedTsv() {
-    if (!listData.length) {
-        setListMessage("コピーできる一覧データがありません。", "error");
-        return;
-    }
-
-    const tsv = rowsToTsv(listData);
-    navigator.clipboard.writeText(tsv).then(() => {
-        setListMessage("更新済み一覧をコピーしました。", "success");
-    }).catch((error) => {
-        console.error("TSVコピー失敗", error);
-        setListMessage("コピーに失敗しました。", "error");
-    });
 }
 
 function copyOutputColumnOnly() {
