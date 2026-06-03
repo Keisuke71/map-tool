@@ -581,6 +581,10 @@ function resetOutputs() {
     setCounts(0, 0);
 }
 
+function buildAddressEntryKey(detailedAddress, municipalityAddress) {
+    return detailedAddress || municipalityAddress;
+}
+
 function resetComparisonOutputs() {
     if (abrOnlyOutput) {
         abrOnlyOutput.value = "";
@@ -655,6 +659,7 @@ function buildCsvAddressRows(rawText, municipalityFilter) {
     ));
 
     const rows = [];
+    const seenAddressEntries = new Set();
 
     filteredRows.forEach((row) => {
         const pref = normalizeValue(row[indexMap.pref]);
@@ -677,6 +682,12 @@ function buildCsvAddressRows(rawText, municipalityFilter) {
             return;
         }
 
+        const entryKey = buildAddressEntryKey(detailedAddress, municipalityAddress);
+        if (seenAddressEntries.has(entryKey)) {
+            return;
+        }
+
+        seenAddressEntries.add(entryKey);
         rows.push({
             detailedAddress,
             detailedAddressWithoutOazaAza: joinAddressParts([
