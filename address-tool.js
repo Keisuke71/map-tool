@@ -2,16 +2,38 @@ const ADDRESS_TOOL_STORAGE_KEY = "addressToolCsvInputV1";
 const MUNICIPALITY_FILTER_STORAGE_KEY = "addressToolMunicipalityFilterV1";
 const BOUNDARY_DATASET_STORAGE_KEY = "addressToolBoundaryDatasetV1";
 const REQUIRED_COLUMNS = ["pref", "city", "ward", "oaza_cho", "machiaza_type", "chome_number"];
+const MUNICIPALITY_TOWN_COLUMNS = {
+    pref: "都道府県名",
+    municipality: "市区町村名",
+    town: "大字町丁目名"
+};
+const MUNICIPALITY_TOWN_REQUIRED_COLUMNS = Object.values(MUNICIPALITY_TOWN_COLUMNS);
+const MUNICIPALITY_DETAIL_COLUMNS = {
+    pref: "都道府県名",
+    municipality: "市区町村名",
+    town: "大字・丁目名",
+    koaza: "小字・通称名"
+};
+const MUNICIPALITY_DETAIL_REQUIRED_COLUMNS = Object.values(MUNICIPALITY_DETAIL_COLUMNS);
 const MAX_PERSISTED_CSV_LENGTH = 150000;
+const ADDRESS_SORT_COLLATOR = new Intl.Collator("ja", {
+    numeric: true,
+    sensitivity: "base"
+});
 
 const csvInput = document.getElementById("csv-input");
 const csvDropZone = document.getElementById("csv-drop-zone");
+const secondaryCsvInput = document.getElementById("secondary-csv-input");
+const secondaryCsvDropZone = document.getElementById("secondary-csv-drop-zone");
 const municipalityFilterInput = document.getElementById("municipality-filter");
+const normalizeKanjiChomeInput = document.getElementById("normalize-kanji-chome");
 const boundaryDatasetSelect = document.getElementById("boundary-dataset-select");
 const extractTabButton = document.getElementById("extract-tab-btn");
 const duplicateTabButton = document.getElementById("duplicate-tab-btn");
+const exclusionTabButton = document.getElementById("exclusion-tab-btn");
 const extractPanel = document.getElementById("extract-panel");
 const duplicatePanel = document.getElementById("duplicate-panel");
+const exclusionPanel = document.getElementById("exclusion-panel");
 const column1Output = document.getElementById("column1-output");
 const column2Output = document.getElementById("column2-output");
 const column3Output = document.getElementById("column3-output");
@@ -28,15 +50,101 @@ const duplicateStatusEl = document.getElementById("duplicate-status");
 const duplicateTotalCountEl = document.getElementById("duplicate-total-count");
 const duplicateAddressCountEl = document.getElementById("duplicate-address-count");
 const duplicateExtraCountEl = document.getElementById("duplicate-extra-count");
+const exclusionInput = document.getElementById("exclusion-input");
+const exclusionOutput = document.getElementById("exclusion-output");
+const exclusionStatusEl = document.getElementById("exclusion-status");
+const exclusionTotalCountEl = document.getElementById("exclusion-total-count");
+const exclusionWordCountEl = document.getElementById("exclusion-word-count");
 const boundaryDatasetCache = new Map();
 const boundaryDatasetPendingLoads = new Map();
 
 function normalizeValue(value) {
-    return value == null ? "" : String(value).trim();
+    return value == null ? "" : String(value).replace(/^\uFEFF/, "").trim();
+}
+
+function normalizeDigitsToHalfWidth(value) {
+    return normalizeValue(value).replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xFEE0));
+}
+
+function kanjiNumberToInt(input) {
+    const digits = {
+        "〇": 0,
+        "零": 0,
+        "一": 1,
+        "二": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9
+    };
+    const units = {
+        "十": 10,
+        "百": 100,
+        "千": 1000
+    };
+
+    let total = 0;
+    let current = 0;
+
+    for (const char of normalizeValue(input)) {
+        if (Object.prototype.hasOwnProperty.call(digits, char)) {
+            current = digits[char];
+            continue;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(units, char)) {
+            total += (current || 1) * units[char];
+            current = 0;
+        }
+    }
+
+    return total + current;
+}
+
+function normalizeChomeNumbers(value) {
+    return normalizeDigitsToHalfWidth(value).replace(
+        /([〇零一二三四五六七八九十百千0-9]+)丁目/g,
+        (_, rawNumber) => {
+            if (/^[0-9]+$/.test(rawNumber)) {
+                return `${Number.parseInt(rawNumber, 10)}丁目`;
+            }
+
+            return `${kanjiNumberToInt(rawNumber)}丁目`;
+        }
+    );
+}
+
+function getExtractionOptions() {
+    return {
+        normalizeKanjiChome: Boolean(normalizeKanjiChomeInput && normalizeKanjiChomeInput.checked)
+    };
+}
+
+function applyExtractionOptions(rows, options = {}) {
+    if (!options.normalizeKanjiChome) {
+        return rows;
+    }
+
+    return rows.map((row) => ({
+        ...row,
+        detailedAddress: normalizeChomeNumbers(row.detailedAddress),
+        detailedAddressWithoutOazaAza: normalizeChomeNumbers(
+            row.detailedAddressWithoutOazaAza || row.detailedAddress
+        )
+    }));
 }
 
 function normalizeMunicipalityName(value) {
     return normalizeValue(value).replace(/[\s　]+/g, "");
+}
+
+function stripCountyFromMunicipalityName(value) {
+    const normalized = normalizeValue(value);
+    const match = normalized.match(/^.+郡(.+[町村].*)$/);
+    return match ? match[1] : normalized;
 }
 
 function parseMunicipalityFilters(value) {
@@ -78,6 +186,25 @@ function setDuplicateCounts(totalCount, duplicateAddressCount, duplicateExtraCou
 
     if (duplicateExtraCountEl) {
         duplicateExtraCountEl.textContent = String(duplicateExtraCount);
+    }
+}
+
+function setExclusionStatus(message, type = "") {
+    if (!exclusionStatusEl) {
+        return;
+    }
+
+    exclusionStatusEl.textContent = message;
+    exclusionStatusEl.className = `status ${type}`.trim();
+}
+
+function setExclusionCounts(totalCount, wordCount) {
+    if (exclusionTotalCountEl) {
+        exclusionTotalCountEl.textContent = String(totalCount);
+    }
+
+    if (exclusionWordCountEl) {
+        exclusionWordCountEl.textContent = String(wordCount);
     }
 }
 
@@ -159,30 +286,56 @@ function appendStorageNotice(message, notice) {
     return notice ? `${message} ${notice}` : message;
 }
 
-function setDropZoneActive(isActive) {
-    if (!csvDropZone) {
+function setDropZoneActive(dropZone, isActive) {
+    if (!dropZone) {
         return;
     }
 
-    csvDropZone.classList.toggle("is-dragover", Boolean(isActive));
+    dropZone.classList.toggle("is-dragover", Boolean(isActive));
+}
+
+function decodeCsvArrayBuffer(buffer) {
+    if (typeof TextDecoder === "undefined") {
+        throw new Error("このブラウザではCSVの文字コードを判定できません。CSVを貼り付けてください。");
+    }
+
+    const encodings = ["utf-8", "shift_jis"];
+    for (const encoding of encodings) {
+        try {
+            return new TextDecoder(encoding, { fatal: true }).decode(buffer);
+        } catch (_error) {
+            // 次の文字コードで再試行します。
+        }
+    }
+
+    return new TextDecoder("utf-8").decode(buffer);
 }
 
 function readCsvFile(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => {
-            resolve(typeof reader.result === "string" ? reader.result : "");
+            try {
+                resolve(reader.result instanceof ArrayBuffer ? decodeCsvArrayBuffer(reader.result) : "");
+            } catch (error) {
+                reject(error);
+            }
         };
         reader.onerror = () => {
             reject(new Error("CSVファイルの読み込みに失敗しました。"));
         };
-        reader.readAsText(file, "utf-8");
+        reader.readAsArrayBuffer(file);
     });
 }
 
-async function loadCsvFile(file) {
+async function loadCsvFile(file, targetInput = csvInput, inputLabel = "CSV") {
     if (!file) {
         setStatus("CSVファイルを選択してください。", "error");
+        return;
+    }
+
+    if (!targetInput) {
+        setStatus(`${inputLabel}の入力欄が見つかりません。`, "error");
         return;
     }
 
@@ -194,13 +347,15 @@ async function loadCsvFile(file) {
 
     try {
         const fileText = await readCsvFile(file);
-        csvInput.value = fileText;
-        const storageNotice = persistCsvInput(fileText);
+        targetInput.value = fileText;
+        const storageNotice = targetInput === csvInput ? persistCsvInput(fileText) : "";
         resetOutputs();
         resetComparisonOutputs();
         setStatus(
             appendStorageNotice(
-                fileName ? `CSVファイル「${fileName}」を読み込みました。` : "CSVファイルを読み込みました。",
+                fileName
+                    ? `${inputLabel}として「${fileName}」を読み込みました。`
+                    : `${inputLabel}を読み込みました。`,
                 storageNotice
             ),
             "success"
@@ -210,22 +365,22 @@ async function loadCsvFile(file) {
     }
 }
 
-function handleDropZoneDragOver(event) {
+function handleDropZoneDragOver(event, dropZone) {
     event.preventDefault();
-    setDropZoneActive(true);
+    setDropZoneActive(dropZone, true);
 }
 
-function handleDropZoneDragLeave(event) {
-    if (!csvDropZone || csvDropZone.contains(event.relatedTarget)) {
+function handleDropZoneDragLeave(event, dropZone) {
+    if (!dropZone || dropZone.contains(event.relatedTarget)) {
         return;
     }
 
-    setDropZoneActive(false);
+    setDropZoneActive(dropZone, false);
 }
 
-function handleDropZoneDrop(event) {
+function handleDropZoneDrop(event, dropZone, targetInput, inputLabel) {
     event.preventDefault();
-    setDropZoneActive(false);
+    setDropZoneActive(dropZone, false);
 
     const files = event.dataTransfer && event.dataTransfer.files;
     if (!files || !files.length) {
@@ -233,7 +388,23 @@ function handleDropZoneDrop(event) {
         return;
     }
 
-    loadCsvFile(files[0]);
+    loadCsvFile(files[0], targetInput, inputLabel);
+}
+
+function setupCsvDropZone(dropZone, targetInput, inputLabel) {
+    if (!dropZone || !targetInput) {
+        return;
+    }
+
+    dropZone.addEventListener("dragenter", () => setDropZoneActive(dropZone, true));
+    dropZone.addEventListener("dragover", (event) => handleDropZoneDragOver(event, dropZone));
+    dropZone.addEventListener("dragleave", (event) => handleDropZoneDragLeave(event, dropZone));
+    dropZone.addEventListener("drop", (event) => handleDropZoneDrop(
+        event,
+        dropZone,
+        targetInput,
+        inputLabel
+    ));
 }
 
 function restoreInput() {
@@ -263,12 +434,21 @@ function formatChome(type, chomeNumber) {
     return normalizedChomeNumber ? `${normalizedChomeNumber}丁目` : "";
 }
 
+function resolveChomeText(type, chome, chomeNumber) {
+    const formattedChome = formatChome(type, chomeNumber);
+    if (formattedChome) {
+        return formattedChome;
+    }
+
+    return normalizeValue(chome);
+}
+
 function formatChomeColumn(type) {
     return normalizeValue(type) === "2" ? "" : "丁目";
 }
 
 function joinAddressParts(parts) {
-    return parts.map(normalizeValue).filter(Boolean).join("");
+    return parts.map(normalizeDigitsToHalfWidth).filter(Boolean).join("");
 }
 
 function normalizeTownNameWithoutOazaAza(value) {
@@ -288,7 +468,15 @@ function normalizeAddressComparisonKey(value) {
 function sortAddressRows(rows) {
     return rows
         .slice()
-        .sort((a, b) => normalizeValue(a.detailedAddress).localeCompare(normalizeValue(b.detailedAddress), "ja"));
+        .sort((a, b) => {
+            const addressA = normalizeValue(a && a.detailedAddress);
+            const addressB = normalizeValue(b && b.detailedAddress);
+            const sortKeyA = normalizeChomeNumbers(normalizeAddressComparisonKey(addressA));
+            const sortKeyB = normalizeChomeNumbers(normalizeAddressComparisonKey(addressB));
+            const comparison = ADDRESS_SORT_COLLATOR.compare(sortKeyA, sortKeyB);
+
+            return comparison || addressA.localeCompare(addressB, "ja");
+        });
 }
 
 function parseCsv(text) {
@@ -346,34 +534,67 @@ function buildColumnIndexMap(headerRow) {
     }, {});
 }
 
-function ensureRequiredColumns(indexMap) {
-    const missingColumns = REQUIRED_COLUMNS.filter((column) => !Object.prototype.hasOwnProperty.call(indexMap, column));
+function getOptionalColumnValue(row, indexMap, columnName) {
+    if (!Object.prototype.hasOwnProperty.call(indexMap, columnName)) {
+        return "";
+    }
+
+    return normalizeValue(row[indexMap[columnName]]);
+}
+
+function hasRequiredColumns(indexMap, columnNames) {
+    return columnNames.every((column) => Object.prototype.hasOwnProperty.call(indexMap, column));
+}
+
+function ensureRequiredColumns(indexMap, columnNames = REQUIRED_COLUMNS) {
+    const missingColumns = columnNames.filter((column) => !Object.prototype.hasOwnProperty.call(indexMap, column));
     if (missingColumns.length > 0) {
         throw new Error(`必要な列が見つかりません: ${missingColumns.join(", ")}`);
     }
 }
 
+function detectAddressCsvFormat(indexMap) {
+    if (hasRequiredColumns(indexMap, REQUIRED_COLUMNS)) {
+        return "legacy";
+    }
+
+    if (hasRequiredColumns(indexMap, MUNICIPALITY_DETAIL_REQUIRED_COLUMNS)) {
+        return "municipalityDetail";
+    }
+
+    if (hasRequiredColumns(indexMap, MUNICIPALITY_TOWN_REQUIRED_COLUMNS)) {
+        return "municipalityTown";
+    }
+
+    throw new Error(
+        `必要な列が見つかりません: ${REQUIRED_COLUMNS.join(", ")} または ${MUNICIPALITY_TOWN_REQUIRED_COLUMNS.join(", ")} または ${MUNICIPALITY_DETAIL_REQUIRED_COLUMNS.join(", ")}`
+    );
+}
+
 function buildMunicipalityCandidates(pref, city, ward) {
     const normalizedPref = normalizeMunicipalityName(pref);
     const normalizedCity = normalizeMunicipalityName(city);
+    const normalizedCityWithoutCounty = normalizeMunicipalityName(stripCountyFromMunicipalityName(city));
     const normalizedWard = normalizeMunicipalityName(ward);
     const candidates = new Set();
 
-    if (normalizedCity) {
-        candidates.add(normalizedCity);
-    }
+    [normalizedCity, normalizedCityWithoutCounty]
+        .filter(Boolean)
+        .forEach((cityCandidate) => {
+            candidates.add(cityCandidate);
 
-    if (normalizedCity && normalizedWard) {
-        candidates.add(`${normalizedCity}${normalizedWard}`);
-    }
+            if (normalizedWard) {
+                candidates.add(`${cityCandidate}${normalizedWard}`);
+            }
 
-    if (normalizedPref && normalizedCity) {
-        candidates.add(`${normalizedPref}${normalizedCity}`);
-    }
+            if (normalizedPref) {
+                candidates.add(`${normalizedPref}${cityCandidate}`);
+            }
 
-    if (normalizedPref && normalizedCity && normalizedWard) {
-        candidates.add(`${normalizedPref}${normalizedCity}${normalizedWard}`);
-    }
+            if (normalizedPref && normalizedWard) {
+                candidates.add(`${normalizedPref}${cityCandidate}${normalizedWard}`);
+            }
+        });
 
     return candidates;
 }
@@ -394,21 +615,31 @@ function getFilterValue() {
 
 function switchToolTab(tabName) {
     const isDuplicateTab = tabName === "duplicate";
+    const isExclusionTab = tabName === "exclusion";
+    const isExtractTab = !isDuplicateTab && !isExclusionTab;
 
     if (extractTabButton) {
-        extractTabButton.classList.toggle("is-active", !isDuplicateTab);
+        extractTabButton.classList.toggle("is-active", isExtractTab);
     }
 
     if (duplicateTabButton) {
         duplicateTabButton.classList.toggle("is-active", isDuplicateTab);
     }
 
+    if (exclusionTabButton) {
+        exclusionTabButton.classList.toggle("is-active", isExclusionTab);
+    }
+
     if (extractPanel) {
-        extractPanel.classList.toggle("is-active", !isDuplicateTab);
+        extractPanel.classList.toggle("is-active", isExtractTab);
     }
 
     if (duplicatePanel) {
         duplicatePanel.classList.toggle("is-active", isDuplicateTab);
+    }
+
+    if (exclusionPanel) {
+        exclusionPanel.classList.toggle("is-active", isExclusionTab);
     }
 }
 
@@ -536,7 +767,7 @@ function getBoundaryRecordKey(properties) {
     ].join("|");
 }
 
-function buildBoundaryAddressRows(features, municipalityFilter) {
+function buildBoundaryAddressRows(features, municipalityFilter, options = {}) {
     const uniqueRows = new Map();
 
     features.forEach((feature) => {
@@ -568,7 +799,7 @@ function buildBoundaryAddressRows(features, municipalityFilter) {
     });
 
     return sortAddressRows(
-        Array.from(uniqueRows.values())
+        applyExtractionOptions(Array.from(uniqueRows.values()), options)
             .filter((row) => row.detailedAddress || row.municipalityAddress)
     );
 }
@@ -606,6 +837,16 @@ function resetDuplicateOutputs() {
     setDuplicateStatus("", "");
 }
 
+function resetExclusionOutputs() {
+    if (exclusionOutput) {
+        exclusionOutput.value = "";
+        exclusionOutput.dataset.generated = "false";
+    }
+
+    setExclusionCounts(0, 0);
+    setExclusionStatus("", "");
+}
+
 function setMainOutputs(rows, processedCount) {
     column1Output.value = rows.map((row) => row.detailedAddress).join("\n");
     column1Output.dataset.withoutOazaAza = rows
@@ -635,22 +876,82 @@ function parseDuplicateInputLines(rawText) {
         .filter(Boolean);
 }
 
-function buildCsvAddressRows(rawText, municipalityFilter) {
-    const normalizedText = normalizeValue(rawText);
+function parseExclusionInputLines(rawText) {
+    const normalizedText = String(rawText == null ? "" : rawText)
+        .replace(/^\uFEFF/, "")
+        .replace(/\r\n?/g, "\n")
+        .replace(/^\n+|\n+$/g, "");
+
     if (!normalizedText) {
-        throw new Error("CSVを貼り付けてください。");
+        return [];
     }
 
-    const parsedRows = parseCsv(normalizedText);
-    if (parsedRows.length < 2) {
-        throw new Error("ヘッダー行とデータ行を含むCSVを貼り付けてください。");
+    return normalizedText.split("\n").map((line) => normalizeValue(line));
+}
+
+function buildExclusionWords(addresses) {
+    const uniqueAddressOrder = new Map();
+    addresses.forEach((address) => {
+        if (address && !uniqueAddressOrder.has(address)) {
+            uniqueAddressOrder.set(address, uniqueAddressOrder.size);
+        }
+    });
+    const sortedAddresses = Array.from(uniqueAddressOrder.keys()).sort();
+
+    function findPrefixStart(prefix) {
+        let left = 0;
+        let right = sortedAddresses.length;
+
+        while (left < right) {
+            const middle = Math.floor((left + right) / 2);
+            if (sortedAddresses[middle] < prefix) {
+                left = middle + 1;
+            } else {
+                right = middle;
+            }
+        }
+
+        return left;
     }
 
-    const headerRow = parsedRows[0].map(normalizeValue);
-    const indexMap = buildColumnIndexMap(headerRow);
-    ensureRequiredColumns(indexMap);
+    return addresses.map((address) => {
+        if (!address) {
+            return "";
+        }
 
-    const dataRows = parsedRows.slice(1);
+        const words = [];
+        if (!address.includes("丁目")) {
+            words.push("丁目");
+        }
+
+        const suffixes = [];
+        for (
+            let index = findPrefixStart(address);
+            index < sortedAddresses.length && sortedAddresses[index].startsWith(address);
+            index += 1
+        ) {
+            const candidate = sortedAddresses[index];
+            if (candidate.length > address.length) {
+                suffixes.push({
+                    order: uniqueAddressOrder.get(candidate),
+                    value: normalizeValue(candidate.slice(address.length))
+                });
+            }
+        }
+
+        suffixes
+            .sort((a, b) => a.order - b.order)
+            .forEach(({ value }) => {
+                if (value && !words.includes(value)) {
+                    words.push(value);
+                }
+            });
+
+        return words.join(",");
+    });
+}
+
+function buildLegacyCsvAddressRows(dataRows, indexMap, municipalityFilter) {
     const filteredRows = dataRows.filter((row) => matchesMunicipalityFilter(
         municipalityFilter,
         row[indexMap.pref],
@@ -667,7 +968,10 @@ function buildCsvAddressRows(rawText, municipalityFilter) {
         const ward = normalizeValue(row[indexMap.ward]);
         const oazaCho = normalizeValue(row[indexMap.oaza_cho]);
         const machiazaType = normalizeValue(row[indexMap.machiaza_type]);
+        const chome = getOptionalColumnValue(row, indexMap, "chome");
         const chomeNumber = normalizeValue(row[indexMap.chome_number]);
+        const koaza = getOptionalColumnValue(row, indexMap, "koaza");
+        const chomeText = resolveChomeText(machiazaType, chome, chomeNumber);
 
         const municipalityAddress = joinAddressParts([pref, city, ward]);
         const detailedAddress = joinAddressParts([
@@ -675,7 +979,8 @@ function buildCsvAddressRows(rawText, municipalityFilter) {
             city,
             ward,
             oazaCho,
-            formatChome(machiazaType, chomeNumber)
+            chomeText,
+            koaza
         ]);
 
         if (!municipalityAddress && !detailedAddress) {
@@ -695,7 +1000,8 @@ function buildCsvAddressRows(rawText, municipalityFilter) {
                 city,
                 ward,
                 normalizeTownNameWithoutOazaAza(oazaCho),
-                formatChome(machiazaType, chomeNumber)
+                chomeText,
+                koaza
             ]),
             municipalityAddress,
             chomeColumnValue: formatChomeColumn(machiazaType)
@@ -705,6 +1011,127 @@ function buildCsvAddressRows(rawText, municipalityFilter) {
     return {
         filteredRowCount: filteredRows.length,
         rows
+    };
+}
+
+function buildMunicipalityTownCsvAddressRows(dataRows, indexMap, municipalityFilter) {
+    const prefColumn = MUNICIPALITY_TOWN_COLUMNS.pref;
+    const municipalityColumn = MUNICIPALITY_TOWN_COLUMNS.municipality;
+    const townColumn = MUNICIPALITY_TOWN_COLUMNS.town;
+    const filteredRows = dataRows.filter((row) => matchesMunicipalityFilter(
+        municipalityFilter,
+        row[indexMap[prefColumn]],
+        row[indexMap[municipalityColumn]],
+        ""
+    ));
+
+    const rows = [];
+
+    filteredRows.forEach((row) => {
+        const pref = normalizeValue(row[indexMap[prefColumn]]);
+        const municipality = stripCountyFromMunicipalityName(row[indexMap[municipalityColumn]]);
+        const town = normalizeValue(row[indexMap[townColumn]]);
+
+        const municipalityAddress = joinAddressParts([pref, municipality]);
+        const detailedAddress = joinAddressParts([pref, municipality, town]);
+
+        if (!municipalityAddress && !detailedAddress) {
+            return;
+        }
+
+        rows.push({
+            detailedAddress,
+            detailedAddressWithoutOazaAza: joinAddressParts([pref, municipality, normalizeTownNameWithoutOazaAza(town)]),
+            municipalityAddress,
+            chomeColumnValue: town.includes("丁目") ? "" : "丁目"
+        });
+    });
+
+    return {
+        filteredRowCount: filteredRows.length,
+        rows
+    };
+}
+
+function buildMunicipalityDetailCsvAddressRows(dataRows, indexMap, municipalityFilter) {
+    const prefColumn = MUNICIPALITY_DETAIL_COLUMNS.pref;
+    const municipalityColumn = MUNICIPALITY_DETAIL_COLUMNS.municipality;
+    const townColumn = MUNICIPALITY_DETAIL_COLUMNS.town;
+    const koazaColumn = MUNICIPALITY_DETAIL_COLUMNS.koaza;
+    const filteredRows = dataRows.filter((row) => matchesMunicipalityFilter(
+        municipalityFilter,
+        row[indexMap[prefColumn]],
+        row[indexMap[municipalityColumn]],
+        ""
+    ));
+
+    const rows = [];
+
+    filteredRows.forEach((row) => {
+        const pref = normalizeValue(row[indexMap[prefColumn]]);
+        const municipality = stripCountyFromMunicipalityName(row[indexMap[municipalityColumn]]);
+        const town = normalizeValue(row[indexMap[townColumn]]);
+        const koaza = normalizeValue(row[indexMap[koazaColumn]]);
+        const municipalityAddress = joinAddressParts([pref, municipality]);
+        const detailedAddress = joinAddressParts([pref, municipality, town, koaza]);
+
+        if (!municipalityAddress && !detailedAddress) {
+            return;
+        }
+
+        rows.push({
+            detailedAddress,
+            detailedAddressWithoutOazaAza: joinAddressParts([
+                pref,
+                municipality,
+                normalizeTownNameWithoutOazaAza(town),
+                koaza
+            ]),
+            municipalityAddress,
+            chomeColumnValue: `${town}${koaza}`.includes("丁目") ? "" : "丁目"
+        });
+    });
+
+    return {
+        filteredRowCount: filteredRows.length,
+        rows
+    };
+}
+
+function buildCsvAddressRows(rawText, municipalityFilter, options = {}) {
+    const normalizedText = normalizeValue(rawText);
+    if (!normalizedText) {
+        throw new Error("CSVを貼り付けてください。");
+    }
+
+    const parsedRows = parseCsv(normalizedText);
+    if (parsedRows.length < 2) {
+        throw new Error("ヘッダー行とデータ行を含むCSVを貼り付けてください。");
+    }
+
+    const headerRow = parsedRows[0].map(normalizeValue);
+    const indexMap = buildColumnIndexMap(headerRow);
+    const dataRows = parsedRows.slice(1);
+    const csvFormat = detectAddressCsvFormat(indexMap);
+
+    let result;
+
+    if (csvFormat === "municipalityDetail") {
+        ensureRequiredColumns(indexMap, MUNICIPALITY_DETAIL_REQUIRED_COLUMNS);
+        result = buildMunicipalityDetailCsvAddressRows(dataRows, indexMap, municipalityFilter);
+    } else if (csvFormat === "municipalityTown") {
+        ensureRequiredColumns(indexMap, MUNICIPALITY_TOWN_REQUIRED_COLUMNS);
+        result = buildMunicipalityTownCsvAddressRows(dataRows, indexMap, municipalityFilter);
+    } else {
+        ensureRequiredColumns(indexMap);
+        result = buildLegacyCsvAddressRows(dataRows, indexMap, municipalityFilter);
+    }
+
+    return {
+        ...result,
+        rows: sortAddressRows(
+            Array.from(buildUniqueAddressRows(applyExtractionOptions(result.rows, options)).values())
+        )
     };
 }
 
@@ -723,14 +1150,14 @@ function buildUniqueAddressRows(rows) {
     return uniqueRows;
 }
 
-async function buildAllBoundaryAddressRows(municipalityFilter) {
+async function buildAllBoundaryAddressRows(municipalityFilter, options = {}) {
     const definitions = getBoundaryDatasetDefinitions();
     const results = await Promise.all(definitions.map(async (definition) => {
         const data = await ensureBoundaryDataset(definition);
         const features = Array.isArray(data && data.features) ? data.features : [];
         return {
             definition,
-            rows: buildBoundaryAddressRows(features, municipalityFilter)
+            rows: buildBoundaryAddressRows(features, municipalityFilter, options)
         };
     }));
 
@@ -757,6 +1184,7 @@ async function buildAllBoundaryAddressRows(municipalityFilter) {
 function extractAddresses() {
     const rawText = normalizeValue(csvInput.value);
     const municipalityFilter = getFilterValue();
+    const extractionOptions = getExtractionOptions();
     const storageNotice = persistCsvInput(csvInput.value);
 
     persistMunicipalityFilter(municipalityFilter);
@@ -769,7 +1197,7 @@ function extractAddresses() {
     }
 
     try {
-        const { filteredRowCount, rows } = buildCsvAddressRows(rawText, municipalityFilter);
+        const { filteredRowCount, rows } = buildCsvAddressRows(rawText, municipalityFilter, extractionOptions);
         setMainOutputs(rows, filteredRowCount);
         resetComparisonOutputs();
         setStatus(
@@ -788,9 +1216,75 @@ function extractAddresses() {
     }
 }
 
+function mergeAddressRows(primaryRows, secondaryRows) {
+    const mergedRows = buildUniqueAddressRows(primaryRows);
+    let addedCount = 0;
+
+    secondaryRows.forEach((row) => {
+        const comparisonKey = normalizeAddressComparisonKey(row && row.detailedAddress);
+        if (!comparisonKey || mergedRows.has(comparisonKey)) {
+            return;
+        }
+
+        mergedRows.set(comparisonKey, row);
+        addedCount += 1;
+    });
+
+    return {
+        addedCount,
+        rows: sortAddressRows(Array.from(mergedRows.values()))
+    };
+}
+
+function mergeCsvAddresses() {
+    const primaryText = normalizeValue(csvInput && csvInput.value);
+    const secondaryText = normalizeValue(secondaryCsvInput && secondaryCsvInput.value);
+    const municipalityFilter = getFilterValue();
+    const extractionOptions = getExtractionOptions();
+    const storageNotice = persistCsvInput(csvInput ? csvInput.value : "");
+
+    persistMunicipalityFilter(municipalityFilter);
+
+    if (!primaryText) {
+        resetOutputs();
+        resetComparisonOutputs();
+        setStatus(appendStorageNotice("1つ目のCSVを貼り付けてください。", storageNotice), "error");
+        return;
+    }
+
+    if (!secondaryText) {
+        resetOutputs();
+        resetComparisonOutputs();
+        setStatus(appendStorageNotice("2つ目のCSVを貼り付けてください。", storageNotice), "error");
+        return;
+    }
+
+    try {
+        const primaryResult = buildCsvAddressRows(primaryText, municipalityFilter, extractionOptions);
+        const secondaryResult = buildCsvAddressRows(secondaryText, municipalityFilter, extractionOptions);
+        const mergedResult = mergeAddressRows(primaryResult.rows, secondaryResult.rows);
+        const processedCount = primaryResult.filteredRowCount + secondaryResult.filteredRowCount;
+
+        setMainOutputs(mergedResult.rows, processedCount);
+        resetComparisonOutputs();
+        setStatus(
+            appendStorageNotice(
+                `2つのCSVを比較し、2つ目から${mergedResult.addedCount}件を追加しました（合計${mergedResult.rows.length}件）。`,
+                storageNotice
+            ),
+            "success"
+        );
+    } catch (error) {
+        resetOutputs();
+        resetComparisonOutputs();
+        setStatus(appendStorageNotice(error.message || "2つのCSVの比較・統合に失敗しました。", storageNotice), "error");
+    }
+}
+
 async function buildAddressesFromBoundaryDataset() {
     const selectedDatasetKey = boundaryDatasetSelect ? normalizeValue(boundaryDatasetSelect.value) : "";
     const municipalityFilter = getFilterValue();
+    const extractionOptions = getExtractionOptions();
     const definition = findBoundaryDatasetDefinitionByKey(selectedDatasetKey);
 
     persistMunicipalityFilter(municipalityFilter);
@@ -806,7 +1300,7 @@ async function buildAddressesFromBoundaryDataset() {
     try {
         const data = await ensureBoundaryDataset(definition);
         const features = Array.isArray(data && data.features) ? data.features : [];
-        const rows = buildBoundaryAddressRows(features, municipalityFilter);
+        const rows = buildBoundaryAddressRows(features, municipalityFilter, extractionOptions);
 
         if (!rows.length) {
             resetOutputs();
@@ -838,6 +1332,7 @@ async function buildAddressesFromBoundaryDataset() {
 async function compareWithExistingBoundaryData() {
     const rawText = normalizeValue(csvInput.value);
     const municipalityFilter = getFilterValue();
+    const extractionOptions = getExtractionOptions();
     const storageNotice = persistCsvInput(csvInput.value);
 
     persistMunicipalityFilter(municipalityFilter);
@@ -857,7 +1352,7 @@ async function compareWithExistingBoundaryData() {
     setStatus(`「${municipalityFilter}」のABR住所一覧と既存境界データを比較しています...`);
 
     try {
-        const csvResult = buildCsvAddressRows(rawText, municipalityFilter);
+        const csvResult = buildCsvAddressRows(rawText, municipalityFilter, extractionOptions);
         const abrRows = sortAddressRows(Array.from(buildUniqueAddressRows(csvResult.rows).values()));
         if (!abrRows.length) {
             resetComparisonOutputs();
@@ -868,7 +1363,7 @@ async function compareWithExistingBoundaryData() {
             return;
         }
 
-        const boundaryResult = await buildAllBoundaryAddressRows(municipalityFilter);
+        const boundaryResult = await buildAllBoundaryAddressRows(municipalityFilter, extractionOptions);
         const boundaryRows = boundaryResult.rows;
         const abrMap = buildUniqueAddressRows(abrRows);
         const boundaryMap = buildUniqueAddressRows(boundaryRows);
@@ -1015,10 +1510,60 @@ function clearDuplicateChecker() {
     setDuplicateStatus("重複チェックをクリアしました。", "success");
 }
 
+function createExclusionWords() {
+    const addresses = parseExclusionInputLines(exclusionInput ? exclusionInput.value : "");
+
+    if (!addresses.some(Boolean)) {
+        resetExclusionOutputs();
+        setExclusionStatus("詳細住所の列を貼り付けてください。", "error");
+        return;
+    }
+
+    const words = buildExclusionWords(addresses);
+    if (exclusionOutput) {
+        exclusionOutput.value = words.join("\n");
+        exclusionOutput.dataset.generated = "true";
+    }
+
+    const wordCount = words.filter(Boolean).length;
+    setExclusionCounts(addresses.length, wordCount);
+    setExclusionStatus(`除外ワード列を作成しました（${wordCount}行に設定）。`, "success");
+}
+
+function copyExclusionResults() {
+    const text = exclusionOutput ? exclusionOutput.value : "";
+
+    if (!exclusionOutput || exclusionOutput.dataset.generated !== "true") {
+        setExclusionStatus("コピーする除外ワード列がありません。", "error");
+        return;
+    }
+
+    navigator.clipboard.writeText(text).then(() => {
+        setExclusionStatus("除外ワード列をコピーしました。", "success");
+    }).catch(() => {
+        setExclusionStatus("コピーに失敗しました。", "error");
+    });
+}
+
+function clearExclusionWords() {
+    if (exclusionInput) {
+        exclusionInput.value = "";
+    }
+
+    resetExclusionOutputs();
+    setExclusionStatus("除外ワード作成をクリアしました。", "success");
+}
+
 function clearAll() {
     csvInput.value = "";
+    if (secondaryCsvInput) {
+        secondaryCsvInput.value = "";
+    }
     if (municipalityFilterInput) {
         municipalityFilterInput.value = "";
+    }
+    if (normalizeKanjiChomeInput) {
+        normalizeKanjiChomeInput.checked = false;
     }
     if (boundaryDatasetSelect) {
         boundaryDatasetSelect.value = "";
@@ -1037,16 +1582,14 @@ function initializeAddressTool() {
     restoreInput();
     switchToolTab("extract");
     resetDuplicateOutputs();
+    resetExclusionOutputs();
 
-    if (csvDropZone) {
-        csvDropZone.addEventListener("dragenter", () => setDropZoneActive(true));
-        csvDropZone.addEventListener("dragover", handleDropZoneDragOver);
-        csvDropZone.addEventListener("dragleave", handleDropZoneDragLeave);
-        csvDropZone.addEventListener("drop", handleDropZoneDrop);
-    }
+    setupCsvDropZone(csvDropZone, csvInput, "1つ目のCSV");
+    setupCsvDropZone(secondaryCsvDropZone, secondaryCsvInput, "2つ目のCSV");
 }
 
 document.getElementById("extract-btn").addEventListener("click", extractAddresses);
+document.getElementById("merge-csv-btn").addEventListener("click", mergeCsvAddresses);
 document.getElementById("build-from-boundary-btn").addEventListener("click", buildAddressesFromBoundaryDataset);
 document.getElementById("compare-btn").addEventListener("click", compareWithExistingBoundaryData);
 document.getElementById("copy-results-btn").addEventListener("click", copyResults);
@@ -1060,11 +1603,17 @@ document.getElementById("clear-btn").addEventListener("click", clearAll);
 document.getElementById("check-duplicates-btn").addEventListener("click", checkDuplicates);
 document.getElementById("copy-duplicate-results-btn").addEventListener("click", copyDuplicateResults);
 document.getElementById("clear-duplicate-btn").addEventListener("click", clearDuplicateChecker);
+document.getElementById("create-exclusion-btn").addEventListener("click", createExclusionWords);
+document.getElementById("copy-exclusion-results-btn").addEventListener("click", copyExclusionResults);
+document.getElementById("clear-exclusion-btn").addEventListener("click", clearExclusionWords);
 if (extractTabButton) {
     extractTabButton.addEventListener("click", () => switchToolTab("extract"));
 }
 if (duplicateTabButton) {
     duplicateTabButton.addEventListener("click", () => switchToolTab("duplicate"));
+}
+if (exclusionTabButton) {
+    exclusionTabButton.addEventListener("click", () => switchToolTab("exclusion"));
 }
 if (boundaryDatasetSelect) {
     boundaryDatasetSelect.addEventListener("change", () => {
