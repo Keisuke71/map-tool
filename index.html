@@ -4,6 +4,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="preconnect" href="https://www.google.com">
+    <link rel="preconnect" href="https://maps.googleapis.com">
+    <link rel="preconnect" href="https://maps.gstatic.com" crossorigin>
     <title>座標取得ツール</title>
     <style>
         /* --- 基本レイアウト --- */
@@ -203,20 +206,60 @@
             height: 50%;
         }
 
+        #main-container.reference-only-mode #work-area {
+            position: absolute;
+            left: -10000px;
+            top: 0;
+            width: 640px;
+            height: 480px;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #main-container.reference-only-mode #ref-area {
+            width: 100%;
+            height: 100%;
+            flex: 1 1 auto;
+        }
+
         #work-area,
         #ref-area {
             position: relative;
         }
 
-        #map {
+        #map,
+        #ref-map {
             width: 100%;
             height: 100%;
         }
 
+        #ref-map {
+            position: absolute;
+            inset: 0;
+            z-index: 2;
+            opacity: 0;
+            transition: opacity 80ms ease;
+            will-change: opacity;
+        }
+
         #ref-frame {
+            position: absolute;
+            inset: 0;
             width: 100%;
             height: 100%;
             border: none;
+            z-index: 1;
+            opacity: 1;
+            transition: opacity 80ms ease;
+            will-change: opacity;
+        }
+
+        #ref-area.is-map-moving #ref-map {
+            opacity: 1;
+        }
+
+        #ref-area.is-map-moving #ref-frame {
+            opacity: 0;
         }
 
         .area-label {
@@ -838,6 +881,10 @@
             flex: 1 1 0;
         }
 
+        #main-container.reference-only-mode #ref-area {
+            flex: 1 1 auto;
+        }
+
         #work-area,
         #ref-area {
             min-width: 0;
@@ -849,6 +896,7 @@
         }
 
         #map,
+        #ref-map,
         #ref-frame {
             background: rgba(255, 255, 255, 0.4);
         }
@@ -868,6 +916,7 @@
             background: rgba(255, 0, 0, 0.16);
             box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
             transform: translate(-50%, -50%);
+            will-change: left, top, width, height;
         }
 
         .ref-marker-pin {
@@ -879,6 +928,7 @@
             background: #d93025;
             box-shadow: 0 2px 8px rgba(19, 34, 52, 0.35);
             transform: translate(-50%, -100%) rotate(-45deg);
+            will-change: left, top;
         }
 
         .ref-marker-pin::after {
@@ -954,6 +1004,37 @@
             border-radius: 999px;
             background: rgba(19, 34, 52, 0.06);
             font-size: 11px;
+        }
+
+        .address-match-status {
+            max-width: min(100%, 680px);
+            padding: 7px 11px;
+            border: 1px solid rgba(19, 34, 52, 0.12);
+            border-radius: 12px;
+            background: rgba(19, 34, 52, 0.06);
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 700;
+            line-height: 1.45;
+        }
+
+        .address-match-status.is-checking {
+            border-color: rgba(213, 122, 50, 0.34);
+            background: rgba(213, 122, 50, 0.1);
+            color: var(--warm-strong);
+        }
+
+        .address-match-status.is-match {
+            border-color: rgba(30, 127, 114, 0.38);
+            background: rgba(30, 127, 114, 0.12);
+            color: var(--accent-strong);
+        }
+
+        .address-match-status.is-mismatch,
+        .address-match-status.is-unavailable {
+            border-color: rgba(198, 84, 55, 0.42);
+            background: rgba(198, 84, 55, 0.13);
+            color: var(--danger-strong);
         }
 
         #api-key-modal {
@@ -1393,27 +1474,8 @@
                                     style="font-weight:bold; color:#27ae60;">ON</span></div>
                             <div class="menu-item" onclick="toggleReferenceMapSync()">🔗 参照マップ同期: <span
                                     id="ref-map-sync-status" style="font-weight:bold; color:#27ae60;">ON</span></div>
-                            <div class="menu-section">
-                                <div class="menu-section-title">
-                                    <span>境界ポリゴン表示</span>
-                                    <span class="menu-badge">EXPERIMENTAL</span>
-                                </div>
-                                <p class="menu-help">郵便番号境界や市区町村境界を作業マップに重ねる実験機能です。既定値は OFF です。</p>
-                                <div class="menu-switch" onclick="toggleExperimentalBoundaryMode()">
-                                    <span>実験機能を有効にする</span>
-                                    <span id="experimental-boundary-status" class="menu-switch-status is-off">OFF</span>
-                                </div>
-                                <div class="menu-field">
-                                    <label for="experimental-map-id-input">Google Maps Map ID</label>
-                                    <div class="menu-field-row">
-                                        <input type="text" id="experimental-map-id-input" class="menu-input"
-                                            placeholder="Map ID を入力">
-                                        <button type="button" class="menu-button"
-                                            onclick="saveExperimentalMapId()">保存</button>
-                                    </div>
-                                </div>
-                                <p class="menu-help" id="experimental-boundary-note">実験機能は OFF です。</p>
-                            </div>
+                            <div class="menu-item" onclick="toggleReferenceOnlyMode()">🗺️ 表示モード: <span
+                                    id="reference-only-status" style="font-weight:bold; color:#2c3e50;">2画面</span></div>
                             <div class="menu-item" onclick="toggleLayout()">🔄 配置を切り替える</div>
                             <div class="menu-item" onclick="window.location.href='address-tool.html'">🏘️ 住所抽出ツールを開く
                             </div>
@@ -1428,8 +1490,9 @@
                 <div class="control-row-bottom">
                     <div class="control-status">
                         <div id="calculated-radius-display">検出範囲: --</div>
+                        <div id="address-match-status-display" class="address-match-status is-idle" role="status"
+                            aria-live="polite">住所照合: 検索後に確認します</div>
                         <div id="town-boundary-status-display" class="experimental-status">町丁境界: 未読込</div>
-                        <div id="boundary-status-display" class="experimental-status">境界ポリゴン: OFF</div>
                         <div id="ref-map-status-display" class="experimental-status">参照マップ: 同期待機中</div>
                         <div id="list-actions" class="control-actions">
                             <button id="load-list-btn">一覧を読み込む</button>
@@ -1452,7 +1515,8 @@
                 </div>
                 <div id="ref-area">
                     <div class="area-label">参照マップ</div>
-                    <iframe id="ref-frame" src="about:blank"></iframe>
+                    <div id="ref-map" aria-label="直接操作できる参照マップ"></div>
+                    <iframe id="ref-frame" src="about:blank" loading="eager" title="参照マップ"></iframe>
                     <div id="ref-marker-overlay" aria-hidden="true"></div>
                 </div>
             </div>

@@ -10,23 +10,21 @@ const STORAGE_KEY_OUTPUT_COL = "mapToolOutputColumnV1";
 const STORAGE_KEY_CURRENT_ROW = "mapToolCurrentRowIndexV1";
 const STORAGE_KEY_LIST_MODE_ENABLED = "mapToolListModeEnabledV1";
 const STORAGE_KEY_SIDEBAR_WIDTH = "mapToolSidebarWidthV1";
-const STORAGE_KEY_EXPERIMENTAL_BOUNDARIES = "experimentalBoundaryOverlayEnabledV1";
-const STORAGE_KEY_EXPERIMENTAL_MAP_ID = "experimentalBoundaryMapIdV1";
 const STORAGE_KEY_TOWN_BOUNDARY_VISIBLE = "townBoundaryVisibleV1";
 const STORAGE_KEY_SEARCH_AREA_RECT_VISIBLE = "searchAreaRectVisibleV1";
 const STORAGE_KEY_REF_MAP_SYNC = "referenceMapSyncEnabledV1";
+const STORAGE_KEY_REFERENCE_ONLY_MODE = "referenceOnlyModeV1";
 
 
 let apiKey = localStorage.getItem(STORAGE_KEY_API);
 let isAutoRadiusEnabled = localStorage.getItem(STORAGE_KEY_AUTO_RADIUS) !== "false"; // デフォルトON
 let layoutMode = localStorage.getItem(STORAGE_KEY_LAYOUT) || "layout-horizontal";
-let isExperimentalBoundaryEnabled = localStorage.getItem(STORAGE_KEY_EXPERIMENTAL_BOUNDARIES) === "true";
-let experimentalMapId = (localStorage.getItem(STORAGE_KEY_EXPERIMENTAL_MAP_ID) || "").trim();
 let isTownBoundaryVisible = localStorage.getItem(STORAGE_KEY_TOWN_BOUNDARY_VISIBLE) !== "false";
 let isSearchAreaRectVisible = localStorage.getItem(STORAGE_KEY_SEARCH_AREA_RECT_VISIBLE) !== "false";
 let isRefMapSyncEnabled = localStorage.getItem(STORAGE_KEY_REF_MAP_SYNC) !== "false";
+let isReferenceOnlyMode = localStorage.getItem(STORAGE_KEY_REFERENCE_ONLY_MODE) === "true";
 
-let map, marker, circle, boundsRect, geocoder;
+let map, refMap, marker, refMarker, circle, refCircle, boundsRect, refBoundsRect, geocoder;
 let currentRadius = 300;
 let listData = [];
 let addressColumnIndex = Number(localStorage.getItem(STORAGE_KEY_ADDRESS_COL)) || 0;
@@ -35,9 +33,6 @@ let currentListRowIndex = Number(localStorage.getItem(STORAGE_KEY_CURRENT_ROW));
 if (!Number.isInteger(currentListRowIndex) || currentListRowIndex < 0) currentListRowIndex = -1;
 let isListModeEnabled = localStorage.getItem(STORAGE_KEY_LIST_MODE_ENABLED) !== "false";
 let sidebarWidth = Number(localStorage.getItem(STORAGE_KEY_SIDEBAR_WIDTH)) || 280;
-let experimentalBoundaryLayers = {};
-let experimentalBoundarySelections = {};
-let lastGeocodeResult = null;
 let townBoundaryLayer = null;
 let townBoundaryLayerDatasetKey = "";
 let activeTownBoundaryData = null;
@@ -48,35 +43,24 @@ let currentTownBoundaryLabel = "";
 let currentSearchArea = null;
 let calculationLogs = [];
 let geocodeRequestToken = 0;
+let pendingGeocodeAddress = "";
 let lastRefMapQuery = "";
 let lastRefMapEmbedUrl = "";
 let refMapRefreshTimer = null;
+let refMapOverlayFrame = null;
+let refMapViewOverride = null;
+let isSynchronizingMapViews = false;
+let mapViewSyncFrame = null;
+let pendingMapViewSync = null;
+let programmaticMapSyncTargets = new WeakMap();
+let refMapRevealTimer = null;
+let refMapLiveViewToken = 0;
 
 const RADIUS_PRESETS = [50, 100, 300, 500, 1000];
 const EARTH_RADIUS_METERS = 6378137;
 const CALCULATION_LOG_LIMIT = 80;
-
-const EXPERIMENTAL_BOUNDARY_CONFIG = [
-    {
-        key: "postal_code",
-        label: "郵便番号境界",
-        featureType: "POSTAL_CODE",
-        color: "#2f6fed",
-        fillOpacity: 0.08,
-        strokeOpacity: 0.9,
-        strokeWeight: 2
-    },
-    {
-        key: "locality",
-        label: "市区町村境界",
-        featureType: "LOCALITY",
-        color: "#1e7f72",
-        fillOpacity: 0.07,
-        strokeOpacity: 0.9,
-        strokeWeight: 2
-    }
-];
-
+const REF_MAP_SETTLED_REFRESH_DELAY = 120;
+const REF_MAP_REVEAL_AFTER_LOAD_DELAY = 40;
 
 // ★設定: 回数制限の目安
 const QUOTA_LIMITS = {
@@ -206,8 +190,8 @@ document.addEventListener("DOMContentLoaded", () => {
     QuotaManager.updateDisplay();
     updateAutoRadiusDisplay();
     updateOverlayVisibilityDisplay();
-    updateExperimentalBoundaryUI();
     updateReferenceMapSyncDisplay();
+    updateReferenceOnlyDisplay();
     refreshTownBoundaryVisibilityState();
     restoreListState();
     applyListModeVisibility();
@@ -250,13 +234,41 @@ function applySavedLayout() {
     const container = document.getElementById("main-container");
     if (!container) return;
 
-    container.classList.remove("layout-horizontal", "layout-vertical");
+    container.classList.remove("layout-horizontal", "layout-vertical", "reference-only-mode");
 
     if (layoutMode !== "layout-vertical") {
         layoutMode = "layout-horizontal";
     }
 
     container.classList.add(layoutMode);
+    container.classList.toggle("reference-only-mode", isReferenceOnlyMode);
+}
+
+function updateReferenceOnlyDisplay() {
+    const status = document.getElementById("reference-only-status");
+    if (!status) return;
+
+    status.innerText = isReferenceOnlyMode ? "参照のみ" : "2画面";
+    status.style.color = isReferenceOnlyMode ? "#27ae60" : "#2c3e50";
+}
+
+function resizeVisibleMaps() {
+    if (!window.google || !google.maps) return;
+    if (map) google.maps.event.trigger(map, "resize");
+    if (refMap) {
+        google.maps.event.trigger(refMap, "resize");
+        if (isReferenceOnlyMode) {
+            syncWorkMapFromReferenceMap();
+        } else {
+            syncReferenceMapFromWorkMap();
+        }
+        syncReferenceSelectionOverlays();
+    }
+    renderReferenceMarkerOverlay();
+}
+
+function resizeVisibleMapsSoon(delay = 100) {
+    setTimeout(resizeVisibleMaps, delay);
 }
 
 function updateAutoRadiusDisplay() {
@@ -292,9 +304,10 @@ function updateReferenceMapSyncDisplay() {
     }
 
     if (status) {
+        const modeLabel = refMap ? "透明操作" : "埋め込み";
         const syncLabel = isRefMapSyncEnabled ? "同期ON" : "同期OFF";
         const overlayLabel = isRefMapSyncEnabled ? "ピン・円表示" : "ピン・円非表示";
-        status.textContent = `参照マップ: ${syncLabel} / ${overlayLabel}`;
+        status.textContent = `参照マップ: ${modeLabel} / ${syncLabel} / ${overlayLabel}`;
         status.classList.toggle("is-active", isRefMapSyncEnabled);
     }
 }
@@ -302,27 +315,19 @@ function updateReferenceMapSyncDisplay() {
 function toggleReferenceMapSync() {
     isRefMapSyncEnabled = !isRefMapSyncEnabled;
     localStorage.setItem(STORAGE_KEY_REF_MAP_SYNC, String(isRefMapSyncEnabled));
+    if (!isRefMapSyncEnabled) {
+        hideReferenceLiveMapImmediately();
+    }
     updateReferenceMapSyncDisplay();
-    renderRefMap();
+    scheduleRefMapRefresh(0);
+    syncReferenceMapFromWorkMap();
+    syncReferenceSelectionOverlays();
+    renderBoundsRect();
     renderReferenceMarkerOverlay();
 }
 
 function setTownBoundaryStatus(message, tone = "muted") {
     const status = document.getElementById("town-boundary-status-display");
-    if (!status) return;
-
-    status.textContent = message;
-    status.classList.remove("is-active", "is-warning");
-
-    if (tone === "active") {
-        status.classList.add("is-active");
-    } else if (tone === "warning") {
-        status.classList.add("is-warning");
-    }
-}
-
-function setExperimentalBoundaryStatus(message, tone = "muted") {
-    const status = document.getElementById("boundary-status-display");
     if (!status) return;
 
     status.textContent = message;
@@ -341,21 +346,37 @@ function renderBoundsRect() {
         boundsRect = null;
     }
 
+    if (refBoundsRect) {
+        refBoundsRect.setMap(null);
+        refBoundsRect = null;
+    }
+
     if (!map || !currentSearchArea || !isSearchAreaRectVisible) {
         return;
     }
 
-    boundsRect = new google.maps.Rectangle({
+    const rectOptions = {
         strokeColor: "#1473e6",
         strokeOpacity: 0.85,
         strokeWeight: 3,
         fillColor: "#1473e6",
         fillOpacity: 0.06,
-        map: map,
         bounds: currentSearchArea,
         clickable: false,
         zIndex: 1
+    };
+
+    boundsRect = new google.maps.Rectangle({
+        ...rectOptions,
+        map: map
     });
+
+    if (refMap && isRefMapSyncEnabled) {
+        refBoundsRect = new google.maps.Rectangle({
+            ...rectOptions,
+            map: refMap
+        });
+    }
 }
 
 function refreshTownBoundaryVisibilityState() {
@@ -408,61 +429,6 @@ function toggleSearchAreaRectVisibility() {
     renderBoundsRect();
 }
 
-function updateExperimentalBoundaryUI() {
-    const toggle = document.getElementById("experimental-boundary-status");
-    const note = document.getElementById("experimental-boundary-note");
-    const mapIdInput = document.getElementById("experimental-map-id-input");
-
-    if (toggle) {
-        toggle.textContent = isExperimentalBoundaryEnabled ? "ON" : "OFF";
-        toggle.classList.toggle("is-on", isExperimentalBoundaryEnabled);
-        toggle.classList.toggle("is-off", !isExperimentalBoundaryEnabled);
-    }
-
-    if (mapIdInput) {
-        mapIdInput.value = experimentalMapId;
-    }
-
-    if (!note) return;
-
-    if (!isExperimentalBoundaryEnabled) {
-        note.textContent = "実験機能は OFF です。必要なときだけ ON にしてください。";
-        setExperimentalBoundaryStatus("境界ポリゴン: OFF");
-        return;
-    }
-
-    if (!experimentalMapId) {
-        note.textContent = "Map ID が未設定です。Cloud Console で作成した Map ID を保存してから使ってください。";
-        setExperimentalBoundaryStatus("境界ポリゴン: Map ID 未設定", "warning");
-        return;
-    }
-
-    note.textContent = "設定変更後は再読み込みして、Map ID 側で Postal Code と Locality の境界レイヤーを有効にしてください。";
-    setExperimentalBoundaryStatus("境界ポリゴン: 待機中", "warning");
-}
-
-function reloadForExperimentalBoundaryChange() {
-    location.reload();
-}
-
-function toggleExperimentalBoundaryMode() {
-    isExperimentalBoundaryEnabled = !isExperimentalBoundaryEnabled;
-    localStorage.setItem(STORAGE_KEY_EXPERIMENTAL_BOUNDARIES, String(isExperimentalBoundaryEnabled));
-    updateExperimentalBoundaryUI();
-    reloadForExperimentalBoundaryChange();
-}
-
-function saveExperimentalMapId() {
-    const input = document.getElementById("experimental-map-id-input");
-    experimentalMapId = input ? input.value.trim() : "";
-    localStorage.setItem(STORAGE_KEY_EXPERIMENTAL_MAP_ID, experimentalMapId);
-    updateExperimentalBoundaryUI();
-
-    if (isExperimentalBoundaryEnabled) {
-        reloadForExperimentalBoundaryChange();
-    }
-}
-
 function applySavedSidebarWidth() {
     const clampedWidth = Math.min(Math.max(sidebarWidth, 220), Math.floor(window.innerWidth * 0.48) || 520);
     sidebarWidth = clampedWidth;
@@ -489,7 +455,7 @@ function initializeSidebarResize() {
         localStorage.setItem(STORAGE_KEY_SIDEBAR_WIDTH, String(sidebarWidth));
         document.removeEventListener("pointermove", onPointerMove);
         document.removeEventListener("pointerup", onPointerUp);
-        setTimeout(() => { if (map) google.maps.event.trigger(map, "resize"); }, 100);
+        resizeVisibleMapsSoon();
     };
 
     resizer.addEventListener("pointerdown", (event) => {
@@ -503,7 +469,7 @@ function initializeSidebarResize() {
 
     window.addEventListener("resize", () => {
         applySavedSidebarWidth();
-        renderReferenceMarkerOverlay();
+        resizeVisibleMaps();
     });
 }
 
@@ -511,13 +477,321 @@ function loadGoogleMapsScript(key) {
     if (window.google && window.google.maps) return;
 
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places,geometry&callback=initMap`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=geometry&callback=initMap`;
     script.async = true;
     script.defer = true;
     script.onerror = () => {
         alert("APIキーが間違っているか、制限されています。\n設定からキーを削除して再入力してください。");
     };
     document.head.appendChild(script);
+}
+
+function buildMapOptions(center, overrides = {}) {
+    const options = {
+        zoom: 15,
+        center,
+        mapTypeId: 'roadmap',
+        streetViewControl: false,
+        clickableIcons: false,
+        fullscreenControl: false,
+        mapTypeControl: true
+    };
+
+    return {
+        ...options,
+        ...overrides
+    };
+}
+
+function setReferenceMapDirectMode(isDirect) {
+    const refArea = document.getElementById("ref-area");
+    if (refArea) {
+        refArea.classList.toggle("is-direct-reference-map", Boolean(isDirect));
+    }
+    updateReferenceMapSyncDisplay();
+}
+
+function setReferenceLiveMapVisible(isVisible) {
+    const refArea = document.getElementById("ref-area");
+    if (!refArea) return;
+
+    refArea.classList.toggle("is-map-moving", Boolean(isVisible));
+}
+
+function showReferenceLiveMapDuringInteraction() {
+    if (!refMap || !isRefMapSyncEnabled) return;
+
+    refMapLiveViewToken += 1;
+    if (refMapRevealTimer) {
+        clearTimeout(refMapRevealTimer);
+        refMapRevealTimer = null;
+    }
+    if (refMapRefreshTimer) {
+        clearTimeout(refMapRefreshTimer);
+        refMapRefreshTimer = null;
+    }
+    setReferenceLiveMapVisible(true);
+}
+
+function revealReferenceFrame(delay = REF_MAP_REVEAL_AFTER_LOAD_DELAY, token = refMapLiveViewToken) {
+    if (refMapRevealTimer) {
+        clearTimeout(refMapRevealTimer);
+    }
+
+    refMapRevealTimer = setTimeout(() => {
+        refMapRevealTimer = null;
+        if (token !== refMapLiveViewToken) return;
+        setReferenceLiveMapVisible(false);
+    }, Math.max(0, delay));
+}
+
+function hideReferenceLiveMapImmediately() {
+    refMapLiveViewToken += 1;
+    if (refMapRevealTimer) {
+        clearTimeout(refMapRevealTimer);
+        refMapRevealTimer = null;
+    }
+    setReferenceLiveMapVisible(false);
+}
+
+function mapsHaveSameView(sourceMap, targetMap) {
+    const sourceCenter = sourceMap && sourceMap.getCenter ? sourceMap.getCenter() : null;
+    const targetCenter = targetMap && targetMap.getCenter ? targetMap.getCenter() : null;
+    const sourceZoom = sourceMap && sourceMap.getZoom ? sourceMap.getZoom() : null;
+    const targetZoom = targetMap && targetMap.getZoom ? targetMap.getZoom() : null;
+
+    if (!sourceCenter || !targetCenter || !Number.isFinite(sourceZoom) || !Number.isFinite(targetZoom)) {
+        return false;
+    }
+
+    return sourceZoom === targetZoom
+        && Math.abs(sourceCenter.lat() - targetCenter.lat()) < 0.0000001
+        && Math.abs(sourceCenter.lng() - targetCenter.lng()) < 0.0000001;
+}
+
+function markProgrammaticMapSync(targetMap) {
+    if (!targetMap) return;
+
+    const token = (programmaticMapSyncTargets.get(targetMap) || 0) + 1;
+    programmaticMapSyncTargets.set(targetMap, token);
+
+    setTimeout(() => {
+        if (programmaticMapSyncTargets.get(targetMap) === token) {
+            programmaticMapSyncTargets.delete(targetMap);
+        }
+    }, 300);
+}
+
+function consumeProgrammaticMapSync(targetMap) {
+    if (!targetMap || !programmaticMapSyncTargets.has(targetMap)) return false;
+
+    programmaticMapSyncTargets.delete(targetMap);
+    return true;
+}
+
+function isProgrammaticMapSync(targetMap) {
+    return Boolean(targetMap && programmaticMapSyncTargets.has(targetMap));
+}
+
+function syncMapView(sourceMap, targetMap) {
+    if (!isRefMapSyncEnabled || isSynchronizingMapViews || !sourceMap || !targetMap) return;
+
+    const center = sourceMap.getCenter();
+    const zoom = sourceMap.getZoom();
+    if (!center || !Number.isFinite(zoom) || mapsHaveSameView(sourceMap, targetMap)) return;
+
+    markProgrammaticMapSync(targetMap);
+    isSynchronizingMapViews = true;
+    try {
+        if (typeof targetMap.moveCamera === "function") {
+            targetMap.moveCamera({ center, zoom });
+        } else {
+            targetMap.setCenter(center);
+            targetMap.setZoom(zoom);
+        }
+    } finally {
+        isSynchronizingMapViews = false;
+    }
+}
+
+function syncReferenceMapFromWorkMap() {
+    syncMapView(map, refMap);
+}
+
+function syncWorkMapFromReferenceMap() {
+    syncMapView(refMap, map);
+}
+
+function scheduleMapViewSync(sourceMap, targetMap) {
+    if (!isRefMapSyncEnabled || !sourceMap || !targetMap) return;
+
+    pendingMapViewSync = { sourceMap, targetMap };
+    if (mapViewSyncFrame) return;
+
+    mapViewSyncFrame = requestAnimationFrame(() => {
+        const sync = pendingMapViewSync;
+        pendingMapViewSync = null;
+        mapViewSyncFrame = null;
+        if (sync) syncMapView(sync.sourceMap, sync.targetMap);
+    });
+}
+
+function cancelScheduledMapViewSync() {
+    pendingMapViewSync = null;
+    if (!mapViewSyncFrame) return;
+
+    cancelAnimationFrame(mapViewSyncFrame);
+    mapViewSyncFrame = null;
+}
+
+function scheduleReferenceMapSyncFromWorkMap() {
+    scheduleMapViewSync(map, refMap);
+}
+
+function scheduleWorkMapSyncFromReferenceMap() {
+    scheduleMapViewSync(refMap, map);
+}
+
+function focusMapOnResult(targetMap, bounds, location) {
+    if (!targetMap || !location) return;
+
+    markProgrammaticMapSync(targetMap);
+
+    if (bounds) {
+        targetMap.fitBounds(bounds);
+        targetMap.panTo(location);
+        return;
+    }
+
+    targetMap.setCenter(location);
+    targetMap.setZoom(16);
+}
+
+function focusMapsOnResult(bounds, location) {
+    cancelScheduledMapViewSync();
+    focusMapOnResult(map, bounds, location);
+    focusMapOnResult(refMap, bounds, location);
+}
+
+function clearReferenceSelectionOverlays() {
+    if (refMarker) refMarker.setMap(null);
+    if (refCircle) refCircle.setMap(null);
+}
+
+function updateMarkerFromReferenceMap(latLng) {
+    if (!isRefMapSyncEnabled || !latLng) return;
+
+    if (!marker) {
+        placeMarkerAndCircle(latLng);
+    } else {
+        resetImpossibleState();
+        marker.setPosition(latLng);
+        updateCirclePosition(latLng);
+        generateOutput(latLng);
+    }
+
+    scheduleReferenceMarkerOverlayRender();
+}
+
+function syncReferenceSelectionOverlays() {
+    if (!refMap) return;
+
+    if (!isRefMapSyncEnabled || !marker || !circle) {
+        clearReferenceSelectionOverlays();
+        return;
+    }
+
+    const position = marker.getPosition();
+    if (!position) {
+        clearReferenceSelectionOverlays();
+        return;
+    }
+
+    if (!refMarker) {
+        refMarker = new google.maps.Marker({
+            position,
+            map: refMap,
+            draggable: true,
+            zIndex: google.maps.Marker.MAX_ZINDEX + 1
+        });
+
+        refMarker.addListener("dragend", (event) => {
+            updateMarkerFromReferenceMap(event.latLng);
+        });
+    } else {
+        refMarker.setPosition(position);
+        refMarker.setMap(refMap);
+    }
+
+    const radius = circle.getRadius ? circle.getRadius() : currentRadius;
+
+    if (!refCircle) {
+        refCircle = new google.maps.Circle({
+            strokeColor: "#FF0000",
+            strokeOpacity: 0.8,
+            strokeWeight: 2,
+            fillColor: "#FF0000",
+            fillOpacity: 0.2,
+            map: refMap,
+            center: position,
+            radius,
+            clickable: false
+        });
+    } else {
+        refCircle.setCenter(position);
+        refCircle.setRadius(radius);
+        refCircle.setMap(refMap);
+    }
+}
+
+function initializeReferenceMap(initialPos) {
+    const refMapElement = document.getElementById("ref-map");
+    if (!refMapElement) {
+        setReferenceMapDirectMode(false);
+        return;
+    }
+
+    setReferenceMapDirectMode(true);
+    refMap = new google.maps.Map(refMapElement, buildMapOptions(initialPos, {
+        disableDefaultUI: true,
+        keyboardShortcuts: false,
+        gestureHandling: "greedy"
+    }));
+    updateReferenceMapSyncDisplay();
+
+    refMap.addListener("click", (event) => {
+        if (!isRefMapSyncEnabled || !event.latLng) return;
+        placeMarkerAndCircle(event.latLng);
+        scheduleReferenceMarkerOverlayRender();
+    });
+
+    const syncWorkMapView = () => {
+        if (isProgrammaticMapSync(refMap)) {
+            scheduleReferenceMarkerOverlayRender();
+            return;
+        }
+        if (isSynchronizingMapViews || mapsHaveSameView(refMap, map)) {
+            scheduleReferenceMarkerOverlayRender();
+            return;
+        }
+        showReferenceLiveMapDuringInteraction();
+        scheduleWorkMapSyncFromReferenceMap();
+        scheduleReferenceMarkerOverlayRender();
+    };
+
+    refMap.addListener("center_changed", syncWorkMapView);
+    refMap.addListener("zoom_changed", syncWorkMapView);
+    refMap.addListener("idle", () => {
+        if (consumeProgrammaticMapSync(refMap)) {
+            syncReferenceSelectionOverlays();
+            return;
+        }
+        syncWorkMapFromReferenceMap();
+        if (isRefMapSyncEnabled) {
+            scheduleRefMapRefresh(REF_MAP_SETTLED_REFRESH_DELAY);
+        }
+        syncReferenceSelectionOverlays();
+    });
 }
 
 /* =========================================
@@ -529,29 +803,50 @@ window.initMap = function () {
 
     const mapElement = document.getElementById("map");
     if (mapElement) {
-        const mapOptions = {
-            zoom: 15,
-            center: initialPos,
-            mapTypeId: 'roadmap',
-            streetViewControl: false,
-            clickableIcons: false,
-            fullscreenControl: false,
-            mapTypeControl: true
+        map = new google.maps.Map(mapElement, buildMapOptions(initialPos));
+        initializeReferenceMap(initialPos);
+        syncReferenceMapFromWorkMap();
+
+        const syncReferenceMapView = () => {
+            if (isProgrammaticMapSync(map)) {
+                scheduleReferenceMarkerOverlayRender();
+                return;
+            }
+            if (isReferenceOnlyMode) {
+                scheduleReferenceMarkerOverlayRender();
+                return;
+            }
+            if (isSynchronizingMapViews || mapsHaveSameView(map, refMap)) {
+                scheduleReferenceMarkerOverlayRender();
+                return;
+            }
+            if (isRefMapSyncEnabled) {
+                showReferenceLiveMapDuringInteraction();
+                scheduleReferenceMapSyncFromWorkMap();
+            }
+            scheduleReferenceMarkerOverlayRender();
         };
-
-        if (isExperimentalBoundaryEnabled && experimentalMapId) {
-            mapOptions.mapId = experimentalMapId;
-        }
-
-        map = new google.maps.Map(mapElement, mapOptions);
 
         map.addListener("click", (e) => {
             placeMarkerAndCircle(e.latLng);
         });
 
+        map.addListener("center_changed", syncReferenceMapView);
+        map.addListener("zoom_changed", syncReferenceMapView);
+
         map.addListener("idle", () => {
+            if (consumeProgrammaticMapSync(map)) {
+                renderReferenceMarkerOverlay();
+                return;
+            }
             if (isRefMapSyncEnabled) {
-                scheduleRefMapRefresh();
+                if (isReferenceOnlyMode) {
+                    syncWorkMapFromReferenceMap();
+                } else {
+                    syncReferenceMapFromWorkMap();
+                }
+                syncReferenceSelectionOverlays();
+                scheduleRefMapRefresh(REF_MAP_SETTLED_REFRESH_DELAY);
             }
             renderReferenceMarkerOverlay();
         });
@@ -559,8 +854,12 @@ window.initMap = function () {
 
     updateRefMap("東京都千代田区富士見2丁目");
 
+    if (pendingGeocodeAddress) {
+        pendingGeocodeAddress = "";
+        geocodeAddress();
+    }
+
     refreshTownBoundaryVisibilityState();
-    ensureExperimentalBoundaryLayers();
 
     document.addEventListener('click', function (event) {
         const settingsMenu = document.getElementById("settings-menu");
@@ -640,6 +939,68 @@ function normalizeTownBoundaryText(value) {
         .replace(/ヶ/g, "ケ")
         .replace(/之/g, "の")
         .trim();
+}
+
+function stripGoogleAddressPrefix(value) {
+    return String(value || "")
+        .normalize("NFKC")
+        .replace(/^\s*(?:日本|Japan)\s*[、,]?\s*/i, "")
+        .replace(/^\s*〒?\s*\d{3}\s*[-‐‑‒–—―ー−]?\s*\d{4}\s*/, "")
+        .trim();
+}
+
+function normalizeAddressForComparison(value) {
+    return normalizeChomeNumbers(stripGoogleAddressPrefix(value))
+        .normalize("NFKC")
+        .replace(/[‐‑‒–—―−]/g, "-")
+        .replace(/[\s　、,]/g, "")
+        .replace(/ヶ/g, "ケ")
+        .replace(/之/g, "の")
+        .trim();
+}
+
+function setAddressMatchStatus(state, message, details = "") {
+    const status = document.getElementById("address-match-status-display");
+    if (!status) return;
+
+    status.classList.remove("is-idle", "is-checking", "is-match", "is-mismatch", "is-unavailable");
+    status.classList.add(`is-${state}`);
+    status.textContent = message;
+    status.title = details;
+}
+
+function updateAddressMatchStatus(searchedAddress, result) {
+    const googleAddress = stripGoogleAddressPrefix(result && result.formatted_address);
+    const normalizedSearchedAddress = normalizeAddressForComparison(searchedAddress);
+    const normalizedGoogleAddress = normalizeAddressForComparison(googleAddress);
+
+    if (!normalizedSearchedAddress || !normalizedGoogleAddress) {
+        setAddressMatchStatus(
+            "unavailable",
+            "⚠️ 住所照合: Google マップの住所を確認できませんでした",
+            `検索住所: ${searchedAddress || "（空欄）"}\nGoogle住所: ${googleAddress || "（取得できませんでした）"}`
+        );
+        return false;
+    }
+
+    const isMatch = normalizedSearchedAddress === normalizedGoogleAddress;
+    const details = `検索住所: ${searchedAddress}\nGoogle住所: ${googleAddress}`;
+
+    if (isMatch) {
+        setAddressMatchStatus(
+            "match",
+            "✅ 住所一致: Google マップの住所と一致しています",
+            details
+        );
+    } else {
+        setAddressMatchStatus(
+            "mismatch",
+            `❌ 住所不一致: Google マップでは「${googleAddress}」です`,
+            details
+        );
+    }
+
+    return isMatch;
 }
 
 function hasLoadedTownBoundaryData() {
@@ -899,84 +1260,6 @@ function updateTownBoundaryOverlay(result, matchedFeatures = null) {
     return true;
 }
 
-function clearExperimentalBoundaryLayers() {
-    EXPERIMENTAL_BOUNDARY_CONFIG.forEach((config) => {
-        const layer = experimentalBoundaryLayers[config.key];
-        if (layer) layer.style = null;
-        experimentalBoundarySelections[config.key] = new Set();
-    });
-}
-
-function ensureExperimentalBoundaryLayers() {
-    if (!map) return false;
-
-    if (!isExperimentalBoundaryEnabled) {
-        clearExperimentalBoundaryLayers();
-        setExperimentalBoundaryStatus("境界ポリゴン: OFF");
-        return false;
-    }
-
-    if (!experimentalMapId) {
-        clearExperimentalBoundaryLayers();
-        setExperimentalBoundaryStatus("境界ポリゴン: Map ID 未設定", "warning");
-        return false;
-    }
-
-    if (typeof map.getFeatureLayer !== "function" || !google.maps.FeatureType) {
-        clearExperimentalBoundaryLayers();
-        setExperimentalBoundaryStatus("境界ポリゴン: この地図では未対応", "warning");
-        return false;
-    }
-
-    let availableCount = 0;
-
-    EXPERIMENTAL_BOUNDARY_CONFIG.forEach((config) => {
-        const featureType = google.maps.FeatureType[config.featureType];
-        if (!featureType) return;
-
-        const layer = map.getFeatureLayer(featureType);
-        experimentalBoundaryLayers[config.key] = layer;
-        experimentalBoundarySelections[config.key] = experimentalBoundarySelections[config.key] || new Set();
-
-        if (layer && layer.isAvailable) {
-            availableCount += 1;
-        }
-    });
-
-    if (!availableCount) {
-        clearExperimentalBoundaryLayers();
-        setExperimentalBoundaryStatus("境界ポリゴン: Map ID 側で境界レイヤー未有効", "warning");
-        return false;
-    }
-
-    return true;
-}
-
-function applyExperimentalBoundaryStyles() {
-    EXPERIMENTAL_BOUNDARY_CONFIG.forEach((config) => {
-        const layer = experimentalBoundaryLayers[config.key];
-        const placeIds = experimentalBoundarySelections[config.key];
-
-        if (!layer || !layer.isAvailable || !(placeIds instanceof Set) || placeIds.size === 0) {
-            if (layer) layer.style = null;
-            return;
-        }
-
-        layer.style = (options) => {
-            const placeId = options && options.feature ? options.feature.placeId : null;
-            if (!placeIds.has(placeId)) return null;
-
-            return {
-                strokeColor: config.color,
-                strokeOpacity: config.strokeOpacity,
-                strokeWeight: config.strokeWeight,
-                fillColor: config.color,
-                fillOpacity: config.fillOpacity
-            };
-        };
-    });
-}
-
 function getAddressComponent(result, type) {
     const components = result && Array.isArray(result.address_components) ? result.address_components : [];
     const match = components.find((component) => Array.isArray(component.types) && component.types.includes(type));
@@ -1038,99 +1321,6 @@ async function ensureTownBoundaryDataForResult(result) {
     }
 }
 
-function buildExperimentalBoundaryQueries(result) {
-    const country = getAddressComponent(result, "country");
-    const adminAreaLevel1 = getAddressComponent(result, "administrative_area_level_1");
-    const locality = getAddressComponent(result, "locality") || getAddressComponent(result, "administrative_area_level_2");
-    const postalCode = getAddressComponent(result, "postal_code");
-    const queries = [];
-
-    if (postalCode) {
-        queries.push({
-            key: "postal_code",
-            textQuery: [postalCode, country].filter(Boolean).join(", ")
-        });
-    }
-
-    if (locality) {
-        queries.push({
-            key: "locality",
-            textQuery: [locality, adminAreaLevel1, country].filter(Boolean).join(", ")
-        });
-    }
-
-    return queries;
-}
-
-async function lookupExperimentalBoundaryPlaceId(config, textQuery, locationBias) {
-    const { Place } = await google.maps.importLibrary("places");
-    const request = {
-        textQuery,
-        fields: ["id"],
-        language: "ja",
-        region: "JP"
-    };
-
-    if (locationBias) {
-        request.locationBias = locationBias;
-    }
-
-    const { places } = await Place.searchByText(request);
-    return Array.isArray(places) && places[0] && places[0].id ? places[0].id : null;
-}
-
-async function updateExperimentalBoundaryOverlays(result) {
-    lastGeocodeResult = result;
-
-    if (!ensureExperimentalBoundaryLayers()) {
-        return;
-    }
-
-    clearExperimentalBoundaryLayers();
-
-    const queries = buildExperimentalBoundaryQueries(result);
-    if (!queries.length) {
-        setExperimentalBoundaryStatus("境界ポリゴン: 検索候補なし", "warning");
-        return;
-    }
-
-    const locationBias = result && result.geometry ? result.geometry.location : null;
-    const shownLabels = [];
-
-    try {
-        for (const query of queries) {
-            const config = EXPERIMENTAL_BOUNDARY_CONFIG.find((item) => item.key === query.key);
-            const layer = config ? experimentalBoundaryLayers[config.key] : null;
-
-            if (!config || !layer || !layer.isAvailable) {
-                continue;
-            }
-
-            const placeId = await lookupExperimentalBoundaryPlaceId(config, query.textQuery, locationBias);
-            if (!placeId) {
-                continue;
-            }
-
-            experimentalBoundarySelections[config.key].add(placeId);
-            shownLabels.push(config.label);
-        }
-    } catch (error) {
-        console.error("Experimental boundary lookup failed.", error);
-        clearExperimentalBoundaryLayers();
-        const detail = error && error.message ? ` (${error.message})` : "";
-        setExperimentalBoundaryStatus(`境界ポリゴン: Places API (New) 設定要確認${detail}`, "warning");
-        return;
-    }
-
-    applyExperimentalBoundaryStyles();
-
-    if (shownLabels.length) {
-        setExperimentalBoundaryStatus(`境界ポリゴン: ${shownLabels.join(" / ")} を表示中`, "active");
-    } else {
-        setExperimentalBoundaryStatus("境界ポリゴン: 該当境界なし", "warning");
-    }
-}
-
 function placeMarkerAndCircle(latLng) {
     resetImpossibleState();
 
@@ -1148,13 +1338,12 @@ function placeMarkerAndCircle(latLng) {
         resetImpossibleState();
         updateCirclePosition(e.latLng);
         generateOutput(e.latLng);
-        const lat = e.latLng.lat();
-        const lng = e.latLng.lng();
-        updateRefMap(`${lat},${lng}`);
+        scheduleReferenceMarkerOverlayRender();
     });
 
     drawCircle(latLng);
     generateOutput(latLng);
+    syncReferenceSelectionOverlays();
 }
 
 function drawCircle(center) {
@@ -1165,11 +1354,13 @@ function drawCircle(center) {
         radius: currentRadius, clickable: false
     });
     renderReferenceMarkerOverlay();
+    syncReferenceSelectionOverlays();
 }
 
 function updateCirclePosition(latLng) {
     if (circle) circle.setCenter(latLng);
     renderReferenceMarkerOverlay();
+    syncReferenceSelectionOverlays();
 }
 
 function getRadiusLabel(radius) {
@@ -1477,19 +1668,48 @@ function getTownBoundaryAutoRadiusResult(location, matches) {
     };
 }
 
+function getLatLngBoundsCorners(bounds) {
+    if (!bounds || typeof bounds.getNorthEast !== "function" || typeof bounds.getSouthWest !== "function") {
+        return [];
+    }
+
+    const northEast = bounds.getNorthEast();
+    const southWest = bounds.getSouthWest();
+    if (!northEast || !southWest) {
+        return [];
+    }
+
+    const northWest = new google.maps.LatLng(northEast.lat(), southWest.lng());
+    const southEast = new google.maps.LatLng(southWest.lat(), northEast.lng());
+    return [northEast, northWest, southEast, southWest];
+}
+
 function getSearchAreaAutoRadiusResult(location, searchArea) {
-    if (!location || !searchArea) {
+    if (!searchArea || typeof searchArea.getCenter !== "function") {
         return null;
     }
 
-    const distance = Math.round(
-        google.maps.geometry.spherical.computeDistanceBetween(location, searchArea.getNorthEast())
-    );
+    const center = searchArea.getCenter() || location;
+    if (!center) {
+        return null;
+    }
+
+    const corners = getLatLngBoundsCorners(searchArea);
+    const maxDistance = corners.reduce((max, corner) => {
+        const distance = google.maps.geometry.spherical.computeDistanceBetween(center, corner);
+        return Math.max(max, distance);
+    }, 0);
+    const roundedDistance = Math.round(maxDistance);
 
     return {
-        distance,
-        selectedRadius: choosePresetRadius(distance),
-        isImpossible: false
+        center,
+        distance: roundedDistance,
+        selectedRadius: choosePresetRadius(roundedDistance),
+        isImpossible: roundedDistance > 1000,
+        bounds: searchArea,
+        stats: {
+            centerShift: location ? Math.round(google.maps.geometry.spherical.computeDistanceBetween(location, center)) : 0
+        }
     };
 }
 
@@ -1545,6 +1765,7 @@ function setRadius(radius) {
         if (marker) generateOutput(marker.getPosition());
     }
     renderReferenceMarkerOverlay();
+    syncReferenceSelectionOverlays();
 }
 
 // 不可ボタン
@@ -1594,7 +1815,16 @@ function geocodeAddress() {
     const address = document.getElementById("address-input").value;
     const calcDisplay = document.getElementById("calculated-radius-display");
 
-    if (!address || !geocoder) return;
+    if (!address) return;
+
+    setAddressMatchStatus("checking", "🔎 住所照合: Google マップの住所を確認中…");
+
+    if (!geocoder) {
+        pendingGeocodeAddress = address;
+        return;
+    }
+
+    pendingGeocodeAddress = "";
 
     if (calcDisplay) calcDisplay.innerText = "";
     appendCalculationLog(`検索開始: ${address}`);
@@ -1608,8 +1838,8 @@ function geocodeAddress() {
         if (status === 'OK') {
             const result = results[0];
             const location = result.geometry.location;
-            lastGeocodeResult = result;
             currentSearchArea = null;
+            updateAddressMatchStatus(address, result);
 
             // 厳密な範囲(bounds)があれば優先
             const searchArea = result.geometry.bounds || result.geometry.viewport;
@@ -1668,13 +1898,17 @@ function geocodeAddress() {
                     );
                 } else if (searchArea) {
                     autoRadiusResult = getSearchAreaAutoRadiusResult(location, searchArea);
+                    placementLocation = autoRadiusResult.center || location;
+                    mapFocusBounds = autoRadiusResult.bounds || searchArea;
                     setRadius(autoRadiusResult.selectedRadius);
                     if (calcDisplay) {
-                        calcDisplay.innerText = `検出範囲(対角): ${autoRadiusResult.distance}m → ${getRadiusLabel(autoRadiusResult.selectedRadius)}を設定`;
+                        calcDisplay.innerText = autoRadiusResult.isImpossible
+                            ? `検索範囲(必要半径): ${autoRadiusResult.distance}m → 不可を選択 / 円は1kmを表示`
+                            : `検索範囲(必要半径): ${autoRadiusResult.distance}m → ${getRadiusLabel(autoRadiusResult.selectedRadius)}を設定`;
                     }
                     appendCalculationLog(
-                        `フォールバック判定: bounds/viewport の北東角まで ${autoRadiusResult.distance}m → ${getRadiusLabel(autoRadiusResult.selectedRadius)}`,
-                        "muted"
+                        `フォールバック判定: bounds/viewport の中心を採用。四隅までの必要半径 ${autoRadiusResult.distance}m → ${getRadiusLabel(autoRadiusResult.selectedRadius)}`,
+                        autoRadiusResult.isImpossible ? "warning" : "muted"
                     );
                 } else if (calcDisplay) {
                     calcDisplay.innerText = "範囲データなし";
@@ -1697,37 +1931,57 @@ function geocodeAddress() {
             if (mapFocusBounds) {
                 currentSearchArea = mapFocusBounds;
                 renderBoundsRect();
-                map.fitBounds(mapFocusBounds);
-                map.panTo(placementLocation);
+                focusMapsOnResult(mapFocusBounds, placementLocation);
             } else {
                 renderBoundsRect();
-                map.setCenter(placementLocation);
-                map.setZoom(16);
+                focusMapsOnResult(null, placementLocation);
             }
 
+            setRefMapViewOverride(placementLocation, getRefMapZoom() || 16);
             updateRefMap(address);
-            const hasTownBoundaryMatch = updateTownBoundaryOverlay(result, townBoundaryMatches);
-            if (!hasTownBoundaryMatch) {
-                void updateExperimentalBoundaryOverlays(result);
-            }
+            updateTownBoundaryOverlay(result, townBoundaryMatches);
 
         } else {
             appendCalculationLog(`検索失敗: ${status}`, "warning");
+            setAddressMatchStatus(
+                "unavailable",
+                "⚠️ 住所照合: 検索に失敗したため確認できませんでした",
+                `検索住所: ${address}\nGoogle Maps status: ${status}`
+            );
             alert('検索できませんでした: ' + status);
         }
     });
 }
 
-function formatRefMapCenter(center) {
-    if (!center) return "";
-    return `${center.lat().toFixed(7)},${center.lng().toFixed(7)}`;
+function getReferenceViewMap() {
+    return isReferenceOnlyMode && refMap ? refMap : map;
 }
 
 function getRefMapZoom() {
-    if (!map) return null;
-    const zoom = map.getZoom();
+    const viewMap = getReferenceViewMap();
+    if (!viewMap) return null;
+
+    const zoom = viewMap.getZoom();
     if (!Number.isFinite(zoom)) return null;
     return Math.min(Math.max(Math.round(zoom), 0), 21);
+}
+
+function setRefMapViewOverride(center, zoom = null) {
+    if (!center) return;
+
+    const normalizedZoom = Number.isFinite(zoom)
+        ? Math.min(Math.max(Math.round(zoom), 0), 21)
+        : null;
+
+    refMapViewOverride = {
+        center,
+        zoom: normalizedZoom
+    };
+}
+
+function formatRefMapCenter(center) {
+    if (!center) return "";
+    return `${center.lat().toFixed(7)},${center.lng().toFixed(7)}`;
 }
 
 function buildRefMapUrl(query) {
@@ -1738,9 +1992,11 @@ function buildRefMapUrl(query) {
         q: query
     });
 
-    if (isRefMapSyncEnabled && map) {
-        const center = formatRefMapCenter(map.getCenter());
-        const zoom = getRefMapZoom();
+    const viewMap = getReferenceViewMap();
+    if (isRefMapSyncEnabled && viewMap) {
+        const view = refMapViewOverride || {};
+        const center = formatRefMapCenter(view.center || viewMap.getCenter());
+        const zoom = Number.isFinite(view.zoom) ? view.zoom : getRefMapZoom();
         if (center) params.set("center", center);
         if (Number.isFinite(zoom)) params.set("zoom", String(zoom));
     }
@@ -1754,20 +2010,28 @@ function renderRefMap() {
 
     if (!frame.dataset.overlayListenerAttached) {
         frame.addEventListener("load", () => {
-            setTimeout(renderReferenceMarkerOverlay, 120);
+            const revealToken = Number(frame.dataset.revealToken || refMapLiveViewToken);
+            setTimeout(() => {
+                renderReferenceMarkerOverlay();
+                revealReferenceFrame(0, revealToken);
+            }, REF_MAP_REVEAL_AFTER_LOAD_DELAY);
         });
         frame.dataset.overlayListenerAttached = "true";
     }
 
     const embedUrl = buildRefMapUrl(lastRefMapQuery);
     if (embedUrl && embedUrl !== lastRefMapEmbedUrl) {
+        frame.dataset.revealToken = String(refMapLiveViewToken);
         frame.src = embedUrl;
         lastRefMapEmbedUrl = embedUrl;
+    } else {
+        revealReferenceFrame(REF_MAP_REVEAL_AFTER_LOAD_DELAY);
     }
+    refMapViewOverride = null;
     renderReferenceMarkerOverlay();
 }
 
-function scheduleRefMapRefresh(delay = 250) {
+function scheduleRefMapRefresh(delay = 0) {
     if (refMapRefreshTimer) {
         clearTimeout(refMapRefreshTimer);
     }
@@ -1775,12 +2039,23 @@ function scheduleRefMapRefresh(delay = 250) {
     refMapRefreshTimer = setTimeout(() => {
         refMapRefreshTimer = null;
         renderRefMap();
-    }, delay);
+    }, Math.max(0, delay));
 }
 
 function updateRefMap(query) {
     lastRefMapQuery = query || lastRefMapQuery;
-    renderRefMap();
+
+    scheduleRefMapRefresh(0);
+    scheduleReferenceMarkerOverlayRender();
+}
+
+function scheduleReferenceMarkerOverlayRender() {
+    if (refMapOverlayFrame) return;
+
+    refMapOverlayFrame = requestAnimationFrame(() => {
+        refMapOverlayFrame = null;
+        renderReferenceMarkerOverlay();
+    });
 }
 
 function projectLatLngToWorldPoint(lat, lng) {
@@ -1806,25 +2081,63 @@ function getMetersPerPixel(lat, zoom) {
     return Math.cos(lat * Math.PI / 180) * 2 * Math.PI * EARTH_RADIUS_METERS / (256 * (2 ** zoom));
 }
 
+function ensureReferenceOverlayElements(overlay) {
+    let radiusCircle = overlay.querySelector(".ref-radius-circle");
+    let pin = overlay.querySelector(".ref-marker-pin");
+
+    if (!radiusCircle) {
+        radiusCircle = document.createElement("div");
+        radiusCircle.className = "ref-radius-circle";
+        overlay.appendChild(radiusCircle);
+    }
+
+    if (!pin) {
+        pin = document.createElement("div");
+        pin.className = "ref-marker-pin";
+        overlay.appendChild(pin);
+    }
+
+    return { radiusCircle, pin };
+}
+
+function setReferenceOverlayVisible(elements, isVisible) {
+    const display = isVisible ? "block" : "none";
+    elements.radiusCircle.style.display = display;
+    elements.pin.style.display = display;
+}
+
 function renderReferenceMarkerOverlay() {
     const overlay = document.getElementById("ref-marker-overlay");
     if (!overlay) return;
 
-    overlay.innerHTML = "";
+    const elements = ensureReferenceOverlayElements(overlay);
 
-    if (!isRefMapSyncEnabled || !map || !marker || !circle) return;
+    if (!isRefMapSyncEnabled || !map || !marker || !circle) {
+        setReferenceOverlayVisible(elements, false);
+        return;
+    }
 
-    const center = map.getCenter();
+    const viewMap = getReferenceViewMap();
+    const center = viewMap ? viewMap.getCenter() : null;
     const zoom = getRefMapZoom();
     const markerPosition = marker.getPosition();
-    if (!center || !markerPosition || !Number.isFinite(zoom)) return;
+    if (!center || !markerPosition || !Number.isFinite(zoom)) {
+        setReferenceOverlayVisible(elements, false);
+        return;
+    }
 
     const rect = overlay.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
+    if (!rect.width || !rect.height) {
+        setReferenceOverlayVisible(elements, false);
+        return;
+    }
 
     const pixel = projectLatLngToRefMapPixel(markerPosition, center, zoom, rect);
     const metersPerPixel = getMetersPerPixel(markerPosition.lat(), zoom);
-    if (!Number.isFinite(metersPerPixel) || metersPerPixel <= 0) return;
+    if (!Number.isFinite(metersPerPixel) || metersPerPixel <= 0) {
+        setReferenceOverlayVisible(elements, false);
+        return;
+    }
 
     const radiusPx = currentRadius / metersPerPixel;
     const padding = Math.max(radiusPx, 24);
@@ -1832,22 +2145,18 @@ function renderReferenceMarkerOverlay() {
         || pixel.x > rect.width + padding
         || pixel.y < -padding
         || pixel.y > rect.height + padding;
-    if (isOutside) return;
+    if (isOutside) {
+        setReferenceOverlayVisible(elements, false);
+        return;
+    }
 
-    const radiusCircle = document.createElement("div");
-    radiusCircle.className = "ref-radius-circle";
-    radiusCircle.style.left = `${pixel.x}px`;
-    radiusCircle.style.top = `${pixel.y}px`;
-    radiusCircle.style.width = `${radiusPx * 2}px`;
-    radiusCircle.style.height = `${radiusPx * 2}px`;
-
-    const pin = document.createElement("div");
-    pin.className = "ref-marker-pin";
-    pin.style.left = `${pixel.x}px`;
-    pin.style.top = `${pixel.y}px`;
-
-    overlay.appendChild(radiusCircle);
-    overlay.appendChild(pin);
+    elements.radiusCircle.style.left = `${pixel.x}px`;
+    elements.radiusCircle.style.top = `${pixel.y}px`;
+    elements.radiusCircle.style.width = `${radiusPx * 2}px`;
+    elements.radiusCircle.style.height = `${radiusPx * 2}px`;
+    elements.pin.style.left = `${pixel.x}px`;
+    elements.pin.style.top = `${pixel.y}px`;
+    setReferenceOverlayVisible(elements, true);
 }
 
 function generateOutput(latLng) {
@@ -1926,7 +2235,16 @@ function toggleLayout() {
     localStorage.setItem(STORAGE_KEY_LAYOUT, layoutMode);
     applySavedLayout();
 
-    setTimeout(() => { if (map) google.maps.event.trigger(map, "resize"); }, 100);
+    resizeVisibleMapsSoon();
+}
+
+function toggleReferenceOnlyMode() {
+    isReferenceOnlyMode = !isReferenceOnlyMode;
+    localStorage.setItem(STORAGE_KEY_REFERENCE_ONLY_MODE, String(isReferenceOnlyMode));
+    applySavedLayout();
+    updateReferenceOnlyDisplay();
+
+    resizeVisibleMapsSoon();
 }
 
 window.deleteApiKey = resetApiKey;
@@ -1946,7 +2264,7 @@ function setListModeEnabled(enabled) {
     isListModeEnabled = Boolean(enabled);
     localStorage.setItem(STORAGE_KEY_LIST_MODE_ENABLED, String(isListModeEnabled));
     applyListModeVisibility();
-    setTimeout(() => { if (map) google.maps.event.trigger(map, "resize"); }, 100);
+    resizeVisibleMapsSoon();
 }
 
 function parseTsvToRows(tsvText) {
@@ -2082,7 +2400,7 @@ function setAddressToMainInput(address) {
     const input = document.getElementById("address-input");
     if (!input) return;
     input.value = address;
-    if (geocoder) geocodeAddress();
+    geocodeAddress();
 }
 
 function showListRow(rowIndex, message) {
