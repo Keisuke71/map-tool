@@ -203,6 +203,27 @@
             margin-top: 8px;
         }
 
+        .extraction-options {
+            border: 1px solid #cfd8df;
+            border-radius: 8px;
+            background: #f8fbfd;
+        }
+
+        .extraction-options summary {
+            padding: 12px;
+            font-size: 14px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .extraction-options[open] summary {
+            border-bottom: 1px solid #dfe7ec;
+        }
+
+        .extraction-options-list {
+            padding: 12px;
+        }
+
         .sub-note {
             margin-top: 8px;
             font-size: 12px;
@@ -291,15 +312,23 @@
             </div>
 
             <div class="result-box filter-box">
-                <strong>抽出オプション</strong>
-                <label class="checkbox-option" for="normalize-kanji-chome">
-                    <input id="normalize-kanji-chome" type="checkbox">
-                    丁目の漢数字を数字に変換する（例: 一丁目 → 1丁目）
-                </label>
-                <label class="checkbox-option" for="normalize-kanji-jo">
-                    <input id="normalize-kanji-jo" type="checkbox">
-                    条の漢数字を数字に変換する（例: 北一条西 → 北1条西）
-                </label>
+                <details class="extraction-options">
+                    <summary><strong>抽出オプション（丁目・条・線の数字変換）</strong></summary>
+                    <div class="extraction-options-list">
+                        <label class="checkbox-option" for="normalize-kanji-chome">
+                            <input id="normalize-kanji-chome" type="checkbox">
+                            丁目の漢数字を数字に変換する（例: 一丁目 → 1丁目）
+                        </label>
+                        <label class="checkbox-option" for="normalize-kanji-jo">
+                            <input id="normalize-kanji-jo" type="checkbox">
+                            条の漢数字を数字に変換する（例: 北一条西 → 北1条西）
+                        </label>
+                        <label class="checkbox-option" for="normalize-kanji-sen">
+                            <input id="normalize-kanji-sen" type="checkbox">
+                            線の漢数字を数字に変換する（例: 西一線北 → 西1線北）
+                        </label>
+                    </div>
+                </details>
             </div>
 
             <div class="result-box filter-box">

@@ -28,6 +28,7 @@ const secondaryCsvDropZone = document.getElementById("secondary-csv-drop-zone");
 const municipalityFilterInput = document.getElementById("municipality-filter");
 const normalizeKanjiChomeInput = document.getElementById("normalize-kanji-chome");
 const normalizeKanjiJoInput = document.getElementById("normalize-kanji-jo");
+const normalizeKanjiSenInput = document.getElementById("normalize-kanji-sen");
 const boundaryDatasetSelect = document.getElementById("boundary-dataset-select");
 const extractTabButton = document.getElementById("extract-tab-btn");
 const duplicateTabButton = document.getElementById("duplicate-tab-btn");
@@ -131,15 +132,29 @@ function normalizeJoNumbers(value) {
     );
 }
 
+function normalizeSenNumbers(value) {
+    return normalizeDigitsToHalfWidth(value).replace(
+        /([〇零一二三四五六七八九十百千0-9]+)線/g,
+        (_, rawNumber) => {
+            if (/^[0-9]+$/.test(rawNumber)) {
+                return `${Number.parseInt(rawNumber, 10)}線`;
+            }
+
+            return `${kanjiNumberToInt(rawNumber)}線`;
+        }
+    );
+}
+
 function getExtractionOptions() {
     return {
         normalizeKanjiChome: Boolean(normalizeKanjiChomeInput && normalizeKanjiChomeInput.checked),
-        normalizeKanjiJo: Boolean(normalizeKanjiJoInput && normalizeKanjiJoInput.checked)
+        normalizeKanjiJo: Boolean(normalizeKanjiJoInput && normalizeKanjiJoInput.checked),
+        normalizeKanjiSen: Boolean(normalizeKanjiSenInput && normalizeKanjiSenInput.checked)
     };
 }
 
 function applyExtractionOptions(rows, options = {}) {
-    if (!options.normalizeKanjiChome && !options.normalizeKanjiJo) {
+    if (!options.normalizeKanjiChome && !options.normalizeKanjiJo && !options.normalizeKanjiSen) {
         return rows;
     }
 
@@ -151,6 +166,9 @@ function applyExtractionOptions(rows, options = {}) {
         }
         if (options.normalizeKanjiJo) {
             normalized = normalizeJoNumbers(normalized);
+        }
+        if (options.normalizeKanjiSen) {
+            normalized = normalizeSenNumbers(normalized);
         }
 
         return normalized;
@@ -1595,6 +1613,9 @@ function clearAll() {
     }
     if (normalizeKanjiJoInput) {
         normalizeKanjiJoInput.checked = false;
+    }
+    if (normalizeKanjiSenInput) {
+        normalizeKanjiSenInput.checked = false;
     }
     if (boundaryDatasetSelect) {
         boundaryDatasetSelect.value = "";
