@@ -199,6 +199,10 @@
             margin: 0;
         }
 
+        .checkbox-option + .checkbox-option {
+            margin-top: 8px;
+        }
+
         .sub-note {
             margin-top: 8px;
             font-size: 12px;
@@ -291,6 +295,10 @@
                 <label class="checkbox-option" for="normalize-kanji-chome">
                     <input id="normalize-kanji-chome" type="checkbox">
                     丁目の漢数字を数字に変換する（例: 一丁目 → 1丁目）
+                </label>
+                <label class="checkbox-option" for="normalize-kanji-jo">
+                    <input id="normalize-kanji-jo" type="checkbox">
+                    条の漢数字を数字に変換する（例: 北一条西 → 北1条西）
                 </label>
             </div>
 
