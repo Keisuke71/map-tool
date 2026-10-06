@@ -43,6 +43,11 @@ let currentTownBoundaryLabel = "";
 let currentSearchArea = null;
 let calculationLogs = [];
 let geocodeRequestToken = 0;
+let geocodeCandidateApplyToken = 0;
+let currentGeocodeAddress = "";
+let currentGeocodeQuery = "";
+let currentGeocodeCandidates = [];
+let currentGeocodeCandidateIndex = -1;
 let pendingGeocodeAddress = "";
 let lastRefMapQuery = "";
 let lastRefMapEmbedUrl = "";
@@ -1003,6 +1008,184 @@ function updateAddressMatchStatus(searchedAddress, result) {
     return isMatch;
 }
 
+function stripAdministrativeAddressPrefix(value) {
+    return normalizeAddressForComparison(value)
+        .replace(/^(?:日本|Japan)/i, "")
+        .replace(/^.*?(?:都|道|府|県)/, "")
+        .replace(/^.*?(?:市|区|町|村)/, "");
+}
+
+function buildMunicipalityStrippedGeocodeQuery(value) {
+    const normalized = normalizeAddressForComparison(value)
+        .replace(/^(?:日本|Japan)/i, "")
+        .replace(/^.*?(?:都|道|府|県)/, "");
+    const municipalityPatterns = [
+        /^.+?市.+?区/,
+        /^.+?郡.+?[町村]/,
+        /^.+?[市区町村]/
+    ];
+
+    for (const pattern of municipalityPatterns) {
+        const match = normalized.match(pattern);
+        if (!match) continue;
+        return normalized.slice(match[0].length).trim();
+    }
+
+    return "";
+}
+
+function extractDistinctiveAddressTerms(value) {
+    const localAddress = stripAdministrativeAddressPrefix(value)
+        .replace(/[〇零一二三四五六七八九十百千]+(?:丁目|番地|番|号|条|線)/g, " ")
+        .replace(/[0-9]+(?:丁目|番地|番|号|条|線)?/g, " ")
+        .replace(/(?:丁目|番地|番|号|条|線)/g, " ")
+        .replace(/[-ー]/g, " ");
+
+    const terms = localAddress.match(/[一-龠々ヶケぁ-んァ-ヶー]+/g) || [];
+    return [...new Set(terms.filter((term) => term.length >= 2))];
+}
+
+function getGeocodeCandidateSearchText(result) {
+    const componentText = result && Array.isArray(result.address_components)
+        ? result.address_components.map((component) => component.long_name || "").join("")
+        : "";
+
+    return normalizeAddressForComparison(
+        `${result && result.formatted_address ? result.formatted_address : ""}${componentText}`
+    );
+}
+
+function getCommonPrefixLength(a, b) {
+    const limit = Math.min(a.length, b.length);
+    let length = 0;
+
+    while (length < limit && a[length] === b[length]) {
+        length += 1;
+    }
+
+    return length;
+}
+
+function scoreGeocodeCandidate(searchedAddress, result) {
+    const normalizedSearchedAddress = normalizeAddressForComparison(searchedAddress);
+    const normalizedGoogleAddress = normalizeAddressForComparison(result && result.formatted_address);
+    const candidateSearchText = getGeocodeCandidateSearchText(result);
+    const searchedLocalAddress = stripAdministrativeAddressPrefix(searchedAddress);
+    const candidateLocalAddress = stripAdministrativeAddressPrefix(result && result.formatted_address);
+    let score = 0;
+
+    if (normalizedSearchedAddress && normalizedSearchedAddress === normalizedGoogleAddress) {
+        score += 100000;
+    } else if (normalizedSearchedAddress && normalizedGoogleAddress.includes(normalizedSearchedAddress)) {
+        score += 80000;
+    } else if (normalizedGoogleAddress && normalizedSearchedAddress.includes(normalizedGoogleAddress)) {
+        score += 30000;
+    }
+
+    score += getCommonPrefixLength(normalizedSearchedAddress, normalizedGoogleAddress) * 100;
+    score += getCommonPrefixLength(searchedLocalAddress, candidateLocalAddress) * 300;
+
+    // 「神居」のような市区町村名より後ろの固有語を重視し、欠ける候補を降格する。
+    extractDistinctiveAddressTerms(searchedAddress).forEach((term) => {
+        score += candidateSearchText.includes(term) ? 6000 + term.length * 100 : -12000;
+    });
+
+    if (result && result.partial_match) {
+        score -= 25000;
+    }
+
+    return score;
+}
+
+function rankGeocodeCandidates(searchedAddress, results) {
+    return (Array.isArray(results) ? results : [])
+        .filter((result) => result && result.geometry && result.geometry.location)
+        .map((result, originalIndex) => ({
+            result,
+            originalIndex,
+            score: scoreGeocodeCandidate(searchedAddress, result)
+        }))
+        .sort((a, b) => b.score - a.score || a.originalIndex - b.originalIndex);
+}
+
+function updateGeocodeCandidateControls() {
+    const controls = document.getElementById("geocode-candidate-controls");
+    const count = document.getElementById("geocode-candidate-count");
+    const address = document.getElementById("geocode-candidate-address");
+    const previousButton = document.getElementById("prev-geocode-candidate-btn");
+    const nextButton = document.getElementById("next-geocode-candidate-btn");
+    const retryButton = document.getElementById("retry-geocode-without-municipality-btn");
+    const candidateCount = currentGeocodeCandidates.length;
+    const hasSelection = candidateCount > 0
+        && currentGeocodeCandidateIndex >= 0
+        && currentGeocodeCandidateIndex < candidateCount;
+    const selectedEntry = hasSelection ? currentGeocodeCandidates[currentGeocodeCandidateIndex] : null;
+    const selectedResult = selectedEntry ? selectedEntry.result : null;
+
+    if (controls) controls.hidden = !hasSelection;
+    if (count) {
+        count.textContent = hasSelection
+            ? `候補 ${currentGeocodeCandidateIndex + 1} / ${candidateCount}`
+            : "候補 0 / 0";
+    }
+    if (address) {
+        const partialMatchLabel = selectedResult && selectedResult.partial_match ? "（部分一致）" : "";
+        address.textContent = selectedResult
+            ? `${stripGoogleAddressPrefix(selectedResult.formatted_address)}${partialMatchLabel}`
+            : "";
+        address.title = address.textContent;
+    }
+    if (previousButton) previousButton.disabled = !hasSelection || currentGeocodeCandidateIndex <= 0;
+    if (nextButton) nextButton.disabled = !hasSelection || currentGeocodeCandidateIndex >= candidateCount - 1;
+    if (retryButton) {
+        const retryQuery = buildMunicipalityStrippedGeocodeQuery(currentGeocodeAddress);
+        const isSameQuery = normalizeAddressForComparison(retryQuery) === normalizeAddressForComparison(currentGeocodeQuery);
+        retryButton.disabled = !hasSelection || !retryQuery || isSameQuery;
+        retryButton.title = retryQuery && !isSameQuery
+            ? `「${retryQuery}」で再検索します`
+            : "この短縮住所では再検索済みです";
+    }
+}
+
+function resetGeocodeCandidates() {
+    geocodeCandidateApplyToken += 1;
+    currentGeocodeAddress = "";
+    currentGeocodeQuery = "";
+    currentGeocodeCandidates = [];
+    currentGeocodeCandidateIndex = -1;
+    updateGeocodeCandidateControls();
+}
+
+function selectRelativeGeocodeCandidate(offset) {
+    if (!Number.isInteger(offset) || !currentGeocodeCandidates.length) return;
+
+    const nextIndex = currentGeocodeCandidateIndex + offset;
+    if (nextIndex < 0 || nextIndex >= currentGeocodeCandidates.length) return;
+
+    applyGeocodeCandidate(nextIndex, geocodeRequestToken).catch((error) => {
+        console.error("Geocode candidate apply failed.", error);
+        appendCalculationLog("候補の切り替えに失敗しました。", "warning");
+    });
+}
+
+function retryGeocodeWithoutMunicipalityPrefix() {
+    const addressInput = document.getElementById("address-input");
+    const originalAddress = currentGeocodeAddress || (addressInput ? addressInput.value.trim() : "");
+    const retryQuery = buildMunicipalityStrippedGeocodeQuery(originalAddress);
+
+    if (!retryQuery) {
+        appendCalculationLog("市区町村までを除いた再検索語を作成できませんでした。", "warning");
+        return;
+    }
+
+    if (normalizeAddressForComparison(retryQuery) === normalizeAddressForComparison(currentGeocodeQuery)) {
+        appendCalculationLog(`短縮住所「${retryQuery}」では再検索済みです。`, "muted");
+        return;
+    }
+
+    requestGeocodeCandidates(retryQuery, originalAddress, true);
+}
+
 function hasLoadedTownBoundaryData() {
     return Boolean(activeTownBoundaryData && Array.isArray(activeTownBoundaryData.features));
 }
@@ -1810,147 +1993,220 @@ function resetImpossibleState() {
     }
 }
 
-// ★修正版: 住所検索 (広めの半径計算)
-function geocodeAddress() {
-    const address = document.getElementById("address-input").value;
+async function applyGeocodeCandidate(candidateIndex, requestToken = geocodeRequestToken) {
+    if (requestToken !== geocodeRequestToken) return;
+    if (candidateIndex < 0 || candidateIndex >= currentGeocodeCandidates.length) return;
+
+    const entry = currentGeocodeCandidates[candidateIndex];
+    const result = entry && entry.result;
+    if (!result || !result.geometry || !result.geometry.location) return;
+
+    const applyToken = ++geocodeCandidateApplyToken;
+    const address = currentGeocodeAddress;
+    const calcDisplay = document.getElementById("calculated-radius-display");
+    const location = result.geometry.location;
+    const selectedAddress = stripGoogleAddressPrefix(result.formatted_address) || "（住所なし）";
+    currentGeocodeCandidateIndex = candidateIndex;
+    currentSearchArea = null;
+    updateGeocodeCandidateControls();
+    updateAddressMatchStatus(address, result);
+    if (calcDisplay) calcDisplay.innerText = "";
+    appendCalculationLog(
+        `候補 ${candidateIndex + 1}/${currentGeocodeCandidates.length} を適用: ${selectedAddress}`,
+        candidateIndex === 0 ? "active" : "muted"
+    );
+
+    // 厳密な範囲(bounds)があれば優先
+    const searchArea = result.geometry.bounds || result.geometry.viewport;
+    const townBoundaryLoadResult = await ensureTownBoundaryDataForResult(result);
+    if (requestToken !== geocodeRequestToken || applyToken !== geocodeCandidateApplyToken) return;
+
+    if (townBoundaryLoadResult.available && townBoundaryLoadResult.definition && !townBoundaryLoadResult.cached) {
+        appendCalculationLog(`町丁境界データ読込: ${townBoundaryLoadResult.definition.label || townBoundaryLoadResult.definition.key}`, "muted");
+    } else if (!townBoundaryLoadResult.available && townBoundaryLoadResult.reason === "not_configured") {
+        appendCalculationLog("町丁境界データなし: この地域は未対応です。", "muted");
+    } else if (!townBoundaryLoadResult.available && townBoundaryLoadResult.reason !== "loader_unavailable") {
+        appendCalculationLog("町丁境界データを使えないため、境界照合をスキップします。", "warning");
+    }
+
+    const townBoundaryMatches = townBoundaryLoadResult.available ? findTownBoundaryMatches(result) : [];
+    let autoRadiusResult = null;
+    let placementLocation = location;
+    let mapFocusBounds = searchArea;
+
+    if (isAutoRadiusEnabled) {
+        if (townBoundaryMatches.length) {
+            const names = townBoundaryMatches
+                .map((feature) => String(feature.properties && (feature.properties.full_name_arabic || feature.properties.full_name) || ""))
+                .filter(Boolean);
+            appendCalculationLog(`町丁境界一致: ${names.slice(0, 3).join(" / ")}${names.length > 3 ? " ほか" : ""}`);
+        } else {
+            appendCalculationLog("町丁境界一致なし: bounds/viewport へフォールバック", "muted");
+        }
+
+        autoRadiusResult = getTownBoundaryAutoRadiusResult(location, townBoundaryMatches);
+
+        if (autoRadiusResult) {
+            placementLocation = autoRadiusResult.center;
+            mapFocusBounds = autoRadiusResult.bounds || searchArea;
+            setRadius(autoRadiusResult.selectedRadius);
+            const stats = autoRadiusResult.stats || {};
+            appendCalculationLog(
+                `町丁境界から最小包含円を計算: feature ${stats.features || 0}件 / ring ${stats.rings || 0} / vertex ${stats.vertices || 0} / 支持点 ${stats.supportSize || 0}`,
+                "active"
+            );
+            appendCalculationLog(
+                `中心補正: 初期ジオから ${stats.centerShift || 0}m 移動して最小包含円の中心を採用`,
+                "active"
+            );
+            if (calcDisplay) {
+                calcDisplay.innerText = autoRadiusResult.isImpossible
+                    ? `町丁境界(必要半径): ${autoRadiusResult.distance}m → 不可を選択 / 円は1kmを表示`
+                    : `町丁境界(必要半径): ${autoRadiusResult.distance}m → ${getRadiusLabel(autoRadiusResult.selectedRadius)}を設定`;
+            }
+            appendCalculationLog(
+                autoRadiusResult.isImpossible
+                    ? `判定結果: 必要半径 ${autoRadiusResult.distance}m のため不可。円は 1km を表示`
+                    : `判定結果: 必要半径 ${autoRadiusResult.distance}m → ${getRadiusLabel(autoRadiusResult.selectedRadius)}`,
+                autoRadiusResult.isImpossible ? "warning" : "active"
+            );
+        } else if (searchArea) {
+            autoRadiusResult = getSearchAreaAutoRadiusResult(location, searchArea);
+            placementLocation = autoRadiusResult.center || location;
+            mapFocusBounds = autoRadiusResult.bounds || searchArea;
+            setRadius(autoRadiusResult.selectedRadius);
+            if (calcDisplay) {
+                calcDisplay.innerText = autoRadiusResult.isImpossible
+                    ? `検索範囲(必要半径): ${autoRadiusResult.distance}m → 不可を選択 / 円は1kmを表示`
+                    : `検索範囲(必要半径): ${autoRadiusResult.distance}m → ${getRadiusLabel(autoRadiusResult.selectedRadius)}を設定`;
+            }
+            appendCalculationLog(
+                `フォールバック判定: bounds/viewport の中心を採用。四隅までの必要半径 ${autoRadiusResult.distance}m → ${getRadiusLabel(autoRadiusResult.selectedRadius)}`,
+                autoRadiusResult.isImpossible ? "warning" : "muted"
+            );
+        } else if (calcDisplay) {
+            calcDisplay.innerText = "範囲データなし";
+            appendCalculationLog("範囲データがないため自動半径は更新されませんでした。", "warning");
+        }
+    } else {
+        appendCalculationLog("自動半径計算は OFF のため、現在の半径設定を維持します。", "muted");
+    }
+
+    placeMarkerAndCircle(placementLocation);
+    if (autoRadiusResult && autoRadiusResult.isImpossible) {
+        activateImpossibleSelection();
+    }
+
+    if (marker) {
+        marker.setZIndex(google.maps.Marker.MAX_ZINDEX + 1);
+    }
+
+    // 青枠の描画
+    if (mapFocusBounds) {
+        currentSearchArea = mapFocusBounds;
+        renderBoundsRect();
+        focusMapsOnResult(mapFocusBounds, placementLocation);
+    } else {
+        renderBoundsRect();
+        focusMapsOnResult(null, placementLocation);
+    }
+
+    setRefMapViewOverride(placementLocation, getRefMapZoom() || 16);
+    const refMapQuery = currentGeocodeCandidates.length > 1 && result.formatted_address
+        ? result.formatted_address
+        : address;
+    updateRefMap(refMapQuery);
+    updateTownBoundaryOverlay(result, townBoundaryMatches);
+}
+
+function requestGeocodeCandidates(query, searchedAddress, isRetry = false) {
+    const normalizedQuery = String(query || "").trim();
+    const comparisonAddress = String(searchedAddress || normalizedQuery).trim();
     const calcDisplay = document.getElementById("calculated-radius-display");
 
-    if (!address) return;
+    if (!normalizedQuery || !comparisonAddress) return;
 
-    setAddressMatchStatus("checking", "🔎 住所照合: Google マップの住所を確認中…");
+    resetGeocodeCandidates();
+    currentGeocodeAddress = comparisonAddress;
+    currentGeocodeQuery = normalizedQuery;
+    setAddressMatchStatus(
+        "checking",
+        isRetry
+            ? `🔎 住所照合: 「${normalizedQuery}」で再検索中…`
+            : "🔎 住所照合: Google マップの候補を確認中…"
+    );
 
     if (!geocoder) {
-        pendingGeocodeAddress = address;
+        pendingGeocodeAddress = comparisonAddress;
         return;
     }
 
     pendingGeocodeAddress = "";
 
     if (calcDisplay) calcDisplay.innerText = "";
-    appendCalculationLog(`検索開始: ${address}`);
+    appendCalculationLog(
+        isRetry
+            ? `市区町村を除いて再検索: ${normalizedQuery}（元住所: ${comparisonAddress}）`
+            : `検索開始: ${normalizedQuery}`
+    );
 
     QuotaManager.increment();
     const requestToken = ++geocodeRequestToken;
 
-    geocoder.geocode({ 'address': address }, async (results, status) => {
+    geocoder.geocode({ 'address': normalizedQuery }, (results, status) => {
         if (requestToken !== geocodeRequestToken) return;
 
-        if (status === 'OK') {
-            const result = results[0];
-            const location = result.geometry.location;
-            currentSearchArea = null;
-            updateAddressMatchStatus(address, result);
+        if (status === 'OK' && Array.isArray(results) && results.length) {
+            currentGeocodeAddress = comparisonAddress;
+            currentGeocodeQuery = normalizedQuery;
+            currentGeocodeCandidates = rankGeocodeCandidates(comparisonAddress, results);
+            currentGeocodeCandidateIndex = currentGeocodeCandidates.length ? 0 : -1;
+            updateGeocodeCandidateControls();
 
-            // 厳密な範囲(bounds)があれば優先
-            const searchArea = result.geometry.bounds || result.geometry.viewport;
+            appendCalculationLog(`住所候補: ${currentGeocodeCandidates.length}件（一致度順）`, "muted");
+            currentGeocodeCandidates.slice(0, 5).forEach((entry, index) => {
+                const candidateAddress = stripGoogleAddressPrefix(entry.result.formatted_address) || "（住所なし）";
+                const partialMatchLabel = entry.result.partial_match ? " / 部分一致" : "";
+                appendCalculationLog(
+                    `候補 ${index + 1}: ${candidateAddress}${partialMatchLabel}`,
+                    index === 0 ? "active" : "muted"
+                );
+            });
 
-            const townBoundaryLoadResult = await ensureTownBoundaryDataForResult(result);
-            if (requestToken !== geocodeRequestToken) return;
-
-            if (townBoundaryLoadResult.available && townBoundaryLoadResult.definition && !townBoundaryLoadResult.cached) {
-                appendCalculationLog(`町丁境界データ読込: ${townBoundaryLoadResult.definition.label || townBoundaryLoadResult.definition.key}`, "muted");
-            } else if (!townBoundaryLoadResult.available && townBoundaryLoadResult.reason === "not_configured") {
-                appendCalculationLog("町丁境界データなし: この地域は未対応です。", "muted");
-            } else if (!townBoundaryLoadResult.available && townBoundaryLoadResult.reason !== "loader_unavailable") {
-                appendCalculationLog("町丁境界データを使えないため、境界照合をスキップします。", "warning");
+            if (!currentGeocodeCandidates.length) {
+                setAddressMatchStatus(
+                    "unavailable",
+                    "⚠️ 住所照合: 座標を持つ候補がありませんでした",
+                    `検索住所: ${comparisonAddress}\nGoogleへの検索語: ${normalizedQuery}`
+                );
+                return;
             }
 
-            const townBoundaryMatches = townBoundaryLoadResult.available ? findTownBoundaryMatches(result) : [];
-            let autoRadiusResult = null;
-            let placementLocation = location;
-            let mapFocusBounds = searchArea;
-
-            if (isAutoRadiusEnabled) {
-                if (townBoundaryMatches.length) {
-                    const names = townBoundaryMatches
-                        .map((feature) => String(feature.properties && (feature.properties.full_name_arabic || feature.properties.full_name) || ""))
-                        .filter(Boolean);
-                    appendCalculationLog(`町丁境界一致: ${names.slice(0, 3).join(" / ")}${names.length > 3 ? " ほか" : ""}`);
-                } else {
-                    appendCalculationLog("町丁境界一致なし: bounds/viewport へフォールバック", "muted");
-                }
-
-                autoRadiusResult = getTownBoundaryAutoRadiusResult(location, townBoundaryMatches);
-
-                if (autoRadiusResult) {
-                    placementLocation = autoRadiusResult.center;
-                    mapFocusBounds = autoRadiusResult.bounds || searchArea;
-                    setRadius(autoRadiusResult.selectedRadius);
-                    const stats = autoRadiusResult.stats || {};
-                    appendCalculationLog(
-                        `町丁境界から最小包含円を計算: feature ${stats.features || 0}件 / ring ${stats.rings || 0} / vertex ${stats.vertices || 0} / 支持点 ${stats.supportSize || 0}`,
-                        "active"
-                    );
-                    appendCalculationLog(
-                        `中心補正: 初期ジオから ${stats.centerShift || 0}m 移動して最小包含円の中心を採用`,
-                        "active"
-                    );
-                    if (calcDisplay) {
-                        calcDisplay.innerText = autoRadiusResult.isImpossible
-                            ? `町丁境界(必要半径): ${autoRadiusResult.distance}m → 不可を選択 / 円は1kmを表示`
-                            : `町丁境界(必要半径): ${autoRadiusResult.distance}m → ${getRadiusLabel(autoRadiusResult.selectedRadius)}を設定`;
-                    }
-                    appendCalculationLog(
-                        autoRadiusResult.isImpossible
-                            ? `判定結果: 必要半径 ${autoRadiusResult.distance}m のため不可。円は 1km を表示`
-                            : `判定結果: 必要半径 ${autoRadiusResult.distance}m → ${getRadiusLabel(autoRadiusResult.selectedRadius)}`,
-                        autoRadiusResult.isImpossible ? "warning" : "active"
-                    );
-                } else if (searchArea) {
-                    autoRadiusResult = getSearchAreaAutoRadiusResult(location, searchArea);
-                    placementLocation = autoRadiusResult.center || location;
-                    mapFocusBounds = autoRadiusResult.bounds || searchArea;
-                    setRadius(autoRadiusResult.selectedRadius);
-                    if (calcDisplay) {
-                        calcDisplay.innerText = autoRadiusResult.isImpossible
-                            ? `検索範囲(必要半径): ${autoRadiusResult.distance}m → 不可を選択 / 円は1kmを表示`
-                            : `検索範囲(必要半径): ${autoRadiusResult.distance}m → ${getRadiusLabel(autoRadiusResult.selectedRadius)}を設定`;
-                    }
-                    appendCalculationLog(
-                        `フォールバック判定: bounds/viewport の中心を採用。四隅までの必要半径 ${autoRadiusResult.distance}m → ${getRadiusLabel(autoRadiusResult.selectedRadius)}`,
-                        autoRadiusResult.isImpossible ? "warning" : "muted"
-                    );
-                } else if (calcDisplay) {
-                    calcDisplay.innerText = "範囲データなし";
-                    appendCalculationLog("範囲データがないため自動半径は更新されませんでした。", "warning");
-                }
-            } else {
-                appendCalculationLog("自動半径計算は OFF のため、現在の半径設定を維持します。", "muted");
-            }
-
-            placeMarkerAndCircle(placementLocation);
-            if (autoRadiusResult && autoRadiusResult.isImpossible) {
-                activateImpossibleSelection();
-            }
-
-            if (marker) {
-                marker.setZIndex(google.maps.Marker.MAX_ZINDEX + 1);
-            }
-
-            // 青枠の描画
-            if (mapFocusBounds) {
-                currentSearchArea = mapFocusBounds;
-                renderBoundsRect();
-                focusMapsOnResult(mapFocusBounds, placementLocation);
-            } else {
-                renderBoundsRect();
-                focusMapsOnResult(null, placementLocation);
-            }
-
-            setRefMapViewOverride(placementLocation, getRefMapZoom() || 16);
-            updateRefMap(address);
-            updateTownBoundaryOverlay(result, townBoundaryMatches);
-
-        } else {
-            appendCalculationLog(`検索失敗: ${status}`, "warning");
-            setAddressMatchStatus(
-                "unavailable",
-                "⚠️ 住所照合: 検索に失敗したため確認できませんでした",
-                `検索住所: ${address}\nGoogle Maps status: ${status}`
-            );
-            alert('検索できませんでした: ' + status);
+            applyGeocodeCandidate(0, requestToken).catch((error) => {
+                console.error("Initial geocode candidate apply failed.", error);
+                appendCalculationLog("先頭候補の適用に失敗しました。", "warning");
+            });
+            return;
         }
+
+        resetGeocodeCandidates();
+        appendCalculationLog(`検索失敗: ${status}`, "warning");
+        setAddressMatchStatus(
+            "unavailable",
+            "⚠️ 住所照合: 検索に失敗したため確認できませんでした",
+            `検索住所: ${comparisonAddress}\nGoogleへの検索語: ${normalizedQuery}\nGoogle Maps status: ${status}`
+        );
+        alert('検索できませんでした: ' + status);
     });
+}
+
+// ★修正版: 住所検索 (広めの半径計算)
+function geocodeAddress() {
+    const addressInput = document.getElementById("address-input");
+    const address = addressInput ? addressInput.value.trim() : "";
+
+    if (!address) return;
+    requestGeocodeCandidates(address, address, false);
 }
 
 function getReferenceViewMap() {
