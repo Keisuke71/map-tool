@@ -1037,6 +1037,55 @@
             color: var(--danger-strong);
         }
 
+        .geocode-candidate-controls {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            max-width: min(100%, 760px);
+            padding: 5px 7px;
+            border: 1px solid rgba(19, 34, 52, 0.12);
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.58);
+            color: var(--ink);
+            font-size: 11px;
+        }
+
+        .geocode-candidate-controls[hidden] {
+            display: none;
+        }
+
+        .geocode-candidate-controls button {
+            padding: 5px 8px;
+            border-radius: 8px;
+            background: rgba(19, 34, 52, 0.08);
+            color: var(--ink);
+            box-shadow: none;
+            font-size: 11px;
+        }
+
+        .geocode-candidate-controls button:hover:not(:disabled) {
+            background: rgba(19, 34, 52, 0.14);
+        }
+
+        .geocode-candidate-controls button:disabled {
+            cursor: default;
+            opacity: 0.4;
+        }
+
+        .geocode-candidate-count {
+            flex: 0 0 auto;
+            font-weight: 800;
+        }
+
+        .geocode-candidate-address {
+            min-width: 0;
+            max-width: 420px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: var(--muted);
+        }
+
         #api-key-modal {
             padding: 20px;
             background: rgba(8, 17, 29, 0.74);
@@ -1492,6 +1541,14 @@
                         <div id="calculated-radius-display">検出範囲: --</div>
                         <div id="address-match-status-display" class="address-match-status is-idle" role="status"
                             aria-live="polite">住所照合: 検索後に確認します</div>
+                        <div id="geocode-candidate-controls" class="geocode-candidate-controls" role="group"
+                            aria-label="住所検索候補" hidden>
+                            <button id="prev-geocode-candidate-btn" type="button">前候補</button>
+                            <span id="geocode-candidate-count" class="geocode-candidate-count">候補 0 / 0</span>
+                            <button id="next-geocode-candidate-btn" type="button">次候補</button>
+                            <button id="retry-geocode-without-municipality-btn" type="button">市区町村を除いて再検索</button>
+                            <span id="geocode-candidate-address" class="geocode-candidate-address"></span>
+                        </div>
                         <div id="town-boundary-status-display" class="experimental-status">町丁境界: 未読込</div>
                         <div id="ref-map-status-display" class="experimental-status">参照マップ: 同期待機中</div>
                         <div id="list-actions" class="control-actions">
@@ -1538,6 +1595,15 @@
         document.getElementById('search-btn').addEventListener('click', geocodeAddress);
         document.getElementById('address-input').addEventListener('keydown', (e) => {
             if (e.key === 'Enter') geocodeAddress();
+        });
+        document.getElementById('prev-geocode-candidate-btn').addEventListener('click', () => {
+            selectRelativeGeocodeCandidate(-1);
+        });
+        document.getElementById('next-geocode-candidate-btn').addEventListener('click', () => {
+            selectRelativeGeocodeCandidate(1);
+        });
+        document.getElementById('retry-geocode-without-municipality-btn').addEventListener('click', () => {
+            retryGeocodeWithoutMunicipalityPrefix();
         });
 
         document.getElementById('load-list-btn').addEventListener('click', loadTsvList);

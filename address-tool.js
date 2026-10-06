@@ -27,6 +27,8 @@ const secondaryCsvInput = document.getElementById("secondary-csv-input");
 const secondaryCsvDropZone = document.getElementById("secondary-csv-drop-zone");
 const municipalityFilterInput = document.getElementById("municipality-filter");
 const normalizeKanjiChomeInput = document.getElementById("normalize-kanji-chome");
+const normalizeKanjiJoInput = document.getElementById("normalize-kanji-jo");
+const normalizeKanjiSenInput = document.getElementById("normalize-kanji-sen");
 const boundaryDatasetSelect = document.getElementById("boundary-dataset-select");
 const extractTabButton = document.getElementById("extract-tab-btn");
 const duplicateTabButton = document.getElementById("duplicate-tab-btn");
@@ -117,21 +119,65 @@ function normalizeChomeNumbers(value) {
     );
 }
 
+function normalizeJoNumbers(value) {
+    return normalizeDigitsToHalfWidth(value).replace(
+        /([〇零一二三四五六七八九十百千0-9]+)条/g,
+        (_, rawNumber) => {
+            if (/^[0-9]+$/.test(rawNumber)) {
+                return `${Number.parseInt(rawNumber, 10)}条`;
+            }
+
+            return `${kanjiNumberToInt(rawNumber)}条`;
+        }
+    );
+}
+
+function normalizeSenNumbers(value) {
+    return normalizeDigitsToHalfWidth(value).replace(
+        /([〇零一二三四五六七八九十百千0-9]+)線/g,
+        (_, rawNumber) => {
+            if (/^[0-9]+$/.test(rawNumber)) {
+                return `${Number.parseInt(rawNumber, 10)}線`;
+            }
+
+            return `${kanjiNumberToInt(rawNumber)}線`;
+        }
+    );
+}
+
 function getExtractionOptions() {
     return {
-        normalizeKanjiChome: Boolean(normalizeKanjiChomeInput && normalizeKanjiChomeInput.checked)
+        normalizeKanjiChome: Boolean(normalizeKanjiChomeInput && normalizeKanjiChomeInput.checked),
+        normalizeKanjiJo: Boolean(normalizeKanjiJoInput && normalizeKanjiJoInput.checked),
+        normalizeKanjiSen: Boolean(normalizeKanjiSenInput && normalizeKanjiSenInput.checked)
     };
 }
 
 function applyExtractionOptions(rows, options = {}) {
-    if (!options.normalizeKanjiChome) {
+    if (!options.normalizeKanjiChome && !options.normalizeKanjiJo && !options.normalizeKanjiSen) {
         return rows;
     }
 
+    const normalizeAddress = (value) => {
+        let normalized = value;
+
+        if (options.normalizeKanjiChome) {
+            normalized = normalizeChomeNumbers(normalized);
+        }
+        if (options.normalizeKanjiJo) {
+            normalized = normalizeJoNumbers(normalized);
+        }
+        if (options.normalizeKanjiSen) {
+            normalized = normalizeSenNumbers(normalized);
+        }
+
+        return normalized;
+    };
+
     return rows.map((row) => ({
         ...row,
-        detailedAddress: normalizeChomeNumbers(row.detailedAddress),
-        detailedAddressWithoutOazaAza: normalizeChomeNumbers(
+        detailedAddress: normalizeAddress(row.detailedAddress),
+        detailedAddressWithoutOazaAza: normalizeAddress(
             row.detailedAddressWithoutOazaAza || row.detailedAddress
         )
     }));
@@ -1564,6 +1610,12 @@ function clearAll() {
     }
     if (normalizeKanjiChomeInput) {
         normalizeKanjiChomeInput.checked = false;
+    }
+    if (normalizeKanjiJoInput) {
+        normalizeKanjiJoInput.checked = false;
+    }
+    if (normalizeKanjiSenInput) {
+        normalizeKanjiSenInput.checked = false;
     }
     if (boundaryDatasetSelect) {
         boundaryDatasetSelect.value = "";
