@@ -66,6 +66,7 @@ const EARTH_RADIUS_METERS = 6378137;
 const CALCULATION_LOG_LIMIT = 80;
 const REF_MAP_SETTLED_REFRESH_DELAY = 120;
 const REF_MAP_REVEAL_AFTER_LOAD_DELAY = 40;
+const EXCLUDED_GEOCODE_RESULT_TYPES = new Set(["intersection"]);
 
 // ★設定: 回数制限の目安
 const QUOTA_LIMITS = {
@@ -915,7 +916,12 @@ function kanjiNumberToInt(input) {
 
     for (const char of String(input || "")) {
         if (Object.prototype.hasOwnProperty.call(digits, char)) {
-            current = digits[char];
+            current = current * 10 + digits[char];
+            continue;
+        }
+
+        if (/^[0-9]$/.test(char)) {
+            current = current * 10 + Number(char);
             continue;
         }
 
@@ -928,18 +934,18 @@ function kanjiNumberToInt(input) {
     return total + current;
 }
 
-function normalizeChomeNumbers(value) {
-    return toHalfWidthDigits(String(value || "").trim()).replace(/([〇零一二三四五六七八九十百千0-9]+)丁目/g, (_, rawNumber) => {
+function normalizeAddressNumbers(value) {
+    return toHalfWidthDigits(String(value || "").trim()).replace(/([〇零一二三四五六七八九十百千0-9]+)(丁目|条|線)/g, (_, rawNumber, suffix) => {
         if (/^[0-9]+$/.test(rawNumber)) {
-            return `${Number.parseInt(rawNumber, 10)}丁目`;
+            return `${Number.parseInt(rawNumber, 10)}${suffix}`;
         }
 
-        return `${kanjiNumberToInt(rawNumber)}丁目`;
+        return `${kanjiNumberToInt(rawNumber)}${suffix}`;
     });
 }
 
 function normalizeTownBoundaryText(value) {
-    return normalizeChomeNumbers(String(value || ""))
+    return normalizeAddressNumbers(String(value || ""))
         .replace(/\s+/g, "")
         .replace(/ヶ/g, "ケ")
         .replace(/之/g, "の")
@@ -955,13 +961,35 @@ function stripGoogleAddressPrefix(value) {
 }
 
 function normalizeAddressForComparison(value) {
-    return normalizeChomeNumbers(stripGoogleAddressPrefix(value))
+    return normalizeAddressNumbers(stripGoogleAddressPrefix(value))
         .normalize("NFKC")
         .replace(/[‐‑‒–—―−]/g, "-")
         .replace(/[\s　、,]/g, "")
         .replace(/ヶ/g, "ケ")
         .replace(/之/g, "の")
         .trim();
+}
+
+function addressesMatchWithOptionalCounty(normalizedAddressA, normalizedAddressB) {
+    if (normalizedAddressA === normalizedAddressB) return true;
+
+    const prefecturePattern = /^(東京都|北海道|京都府|大阪府|.{2,3}県)?(.*)$/;
+    const addressA = normalizedAddressA.match(prefecturePattern);
+    const addressB = normalizedAddressB.match(prefecturePattern);
+    if (addressA[1] !== addressB[1]) return false;
+
+    const hasSupplementedCounty = (withCounty, withoutCounty) => {
+        // 町村名以降が完全一致し、追加された部分が郡名だけの場合に限る。
+        if (!/^[^郡]+?[町村]/.test(withoutCounty) || !withCounty.endsWith(withoutCounty)) {
+            return false;
+        }
+
+        const county = withCounty.slice(0, -withoutCounty.length);
+        return /^[^郡]+郡$/.test(county);
+    };
+
+    return hasSupplementedCounty(addressA[2], addressB[2])
+        || hasSupplementedCounty(addressB[2], addressA[2]);
 }
 
 function setAddressMatchStatus(state, message, details = "") {
@@ -988,7 +1016,7 @@ function updateAddressMatchStatus(searchedAddress, result) {
         return false;
     }
 
-    const isMatch = normalizedSearchedAddress === normalizedGoogleAddress;
+    const isMatch = addressesMatchWithOptionalCounty(normalizedSearchedAddress, normalizedGoogleAddress);
     const details = `検索住所: ${searchedAddress}\nGoogle住所: ${googleAddress}`;
 
     if (isMatch) {
@@ -1055,6 +1083,19 @@ function getGeocodeCandidateSearchText(result) {
     );
 }
 
+function isExcludedGeocodeCandidate(result) {
+    if (!result || !Array.isArray(result.types)) return false;
+    return result.types.some((type) => EXCLUDED_GEOCODE_RESULT_TYPES.has(type));
+}
+
+function getRefMapQueryForGeocodeResult(result, fallbackAddress) {
+    const placeId = String(result && result.place_id || "").trim();
+    if (placeId) return `place_id:${placeId}`;
+
+    const formattedAddress = String(result && result.formatted_address || "").trim();
+    return formattedAddress || fallbackAddress;
+}
+
 function getCommonPrefixLength(a, b) {
     const limit = Math.min(a.length, b.length);
     let length = 0;
@@ -1074,7 +1115,7 @@ function scoreGeocodeCandidate(searchedAddress, result) {
     const candidateLocalAddress = stripAdministrativeAddressPrefix(result && result.formatted_address);
     let score = 0;
 
-    if (normalizedSearchedAddress && normalizedSearchedAddress === normalizedGoogleAddress) {
+    if (normalizedSearchedAddress && addressesMatchWithOptionalCounty(normalizedSearchedAddress, normalizedGoogleAddress)) {
         score += 100000;
     } else if (normalizedSearchedAddress && normalizedGoogleAddress.includes(normalizedSearchedAddress)) {
         score += 80000;
@@ -1099,7 +1140,12 @@ function scoreGeocodeCandidate(searchedAddress, result) {
 
 function rankGeocodeCandidates(searchedAddress, results) {
     return (Array.isArray(results) ? results : [])
-        .filter((result) => result && result.geometry && result.geometry.location)
+        .filter((result) => (
+            result
+            && result.geometry
+            && result.geometry.location
+            && !isExcludedGeocodeCandidate(result)
+        ))
         .map((result, originalIndex) => ({
             result,
             originalIndex,
@@ -2112,15 +2158,13 @@ async function applyGeocodeCandidate(candidateIndex, requestToken = geocodeReque
     }
 
     setRefMapViewOverride(placementLocation, getRefMapZoom() || 16);
-    const refMapQuery = currentGeocodeCandidates.length > 1 && result.formatted_address
-        ? result.formatted_address
-        : address;
+    const refMapQuery = getRefMapQueryForGeocodeResult(result, address);
     updateRefMap(refMapQuery);
     updateTownBoundaryOverlay(result, townBoundaryMatches);
 }
 
 function requestGeocodeCandidates(query, searchedAddress, isRetry = false) {
-    const normalizedQuery = String(query || "").trim();
+    const normalizedQuery = normalizeAddressNumbers(query);
     const comparisonAddress = String(searchedAddress || normalizedQuery).trim();
     const calcDisplay = document.getElementById("calculated-radius-display");
 
@@ -2159,9 +2203,17 @@ function requestGeocodeCandidates(query, searchedAddress, isRetry = false) {
         if (status === 'OK' && Array.isArray(results) && results.length) {
             currentGeocodeAddress = comparisonAddress;
             currentGeocodeQuery = normalizedQuery;
+            const excludedIntersectionCount = results.filter(isExcludedGeocodeCandidate).length;
             currentGeocodeCandidates = rankGeocodeCandidates(comparisonAddress, results);
             currentGeocodeCandidateIndex = currentGeocodeCandidates.length ? 0 : -1;
             updateGeocodeCandidateControls();
+
+            if (excludedIntersectionCount) {
+                appendCalculationLog(
+                    `交差点候補 ${excludedIntersectionCount}件を住所候補から除外しました。`,
+                    "muted"
+                );
+            }
 
             appendCalculationLog(`住所候補: ${currentGeocodeCandidates.length}件（一致度順）`, "muted");
             currentGeocodeCandidates.slice(0, 5).forEach((entry, index) => {
@@ -2176,7 +2228,9 @@ function requestGeocodeCandidates(query, searchedAddress, isRetry = false) {
             if (!currentGeocodeCandidates.length) {
                 setAddressMatchStatus(
                     "unavailable",
-                    "⚠️ 住所照合: 座標を持つ候補がありませんでした",
+                    excludedIntersectionCount
+                        ? "⚠️ 住所照合: 交差点以外の住所候補がありませんでした"
+                        : "⚠️ 住所照合: 座標を持つ候補がありませんでした",
                     `検索住所: ${comparisonAddress}\nGoogleへの検索語: ${normalizedQuery}`
                 );
                 return;
