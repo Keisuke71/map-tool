@@ -279,6 +279,7 @@
             <button id="extract-tab-btn" class="tab-button is-active" type="button">抽出・比較</button>
             <button id="duplicate-tab-btn" class="tab-button" type="button">重複チェック</button>
             <button id="exclusion-tab-btn" class="tab-button" type="button">除外ワード作成</button>
+            <button id="address-alert-tab-btn" class="tab-button" type="button">住所補充アラート</button>
         </div>
 
         <div id="extract-panel" class="tool-panel is-active">
@@ -438,7 +439,7 @@
             <section class="card">
                 <div class="description">
                     詳細住所の列を1行ずつ貼り付けると、同じ行数の除外ワード列を作成します。<br>
-                    「○丁目」を含まない住所には「丁目」を設定し、その住所から始まる、より長い住所がある場合は後ろの部分もカンマ区切りで追加します。
+                    その住所から始まる、より長い住所が入力一覧にある場合だけ、後ろの部分をカンマ区切りで設定します。「丁目」は一律に追加せず、「○○町」と「○○町1丁目」がある場合は「1丁目」を除外ワードに含めます。
                 </div>
                 <textarea id="exclusion-input" placeholder="愛知県刈谷市井ケ谷町&#10;愛知県刈谷市井ケ谷町井田&#10;愛知県刈谷市井ケ谷町一本木"></textarea>
                 <div class="button-row">
@@ -456,8 +457,40 @@
             <section class="card">
                 <div class="result-box">
                     <h2>除外ワード列</h2>
-                    <textarea id="exclusion-output" readonly placeholder="丁目,井田,一本木"></textarea>
+                    <textarea id="exclusion-output" readonly placeholder="井田,一本木"></textarea>
                     <div class="sub-note">入力と同じ並び・行数で出力します。そのままスプレッドシートの列へ貼り付けられます。</div>
+                </div>
+            </section>
+        </div>
+
+        <div id="address-alert-panel" class="tool-panel">
+            <section class="card">
+                <div class="description">
+                    詳細住所を1行ずつ貼り付けると、市区町村名より後ろの住所を使って「○○」以降の住所を補充してください、というアラート文を作成します。<br>
+                    都道府県名・郡名・市区町村名を取り除きます。政令指定都市は区名まで取り除きます。<br>
+                    例: 青森県つがる市稲垣町下繁田 → 「稲垣町下繁田」以降の住所を補充してください
+                </div>
+                <div class="result-box filter-box">
+                    <label for="address-alert-input"><strong>詳細住所の列</strong></label>
+                    <textarea id="address-alert-input" placeholder="青森県つがる市稲垣町下繁田&#10;東京都千代田区丸の内1丁目"></textarea>
+                </div>
+                <div class="button-row">
+                    <button id="create-address-alert-btn" type="button">アラート文を作成する</button>
+                    <button id="copy-address-alert-results-btn" class="success" type="button">アラート文の列をコピー</button>
+                    <button id="clear-address-alert-btn" class="secondary" type="button">入力と結果をクリア</button>
+                </div>
+                <div id="address-alert-status" class="status" role="status" aria-live="polite"></div>
+                <div class="meta">
+                    <div>入力行数: <strong id="address-alert-total-count">0</strong></div>
+                    <div>アラート文あり: <strong id="address-alert-output-count">0</strong></div>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="result-box">
+                    <h2><label for="address-alert-output">アラート文の列</label></h2>
+                    <textarea id="address-alert-output" readonly placeholder="「稲垣町下繁田」以降の住所を補充してください"></textarea>
+                    <div class="sub-note">空行も含め、入力と同じ並び・行数で出力します。市区町村名やその後の住所を判別できない行は空欄にし、上に行番号を表示します。</div>
                 </div>
             </section>
         </div>
