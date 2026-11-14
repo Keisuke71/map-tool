@@ -33,9 +33,11 @@ const boundaryDatasetSelect = document.getElementById("boundary-dataset-select")
 const extractTabButton = document.getElementById("extract-tab-btn");
 const duplicateTabButton = document.getElementById("duplicate-tab-btn");
 const exclusionTabButton = document.getElementById("exclusion-tab-btn");
+const addressAlertTabButton = document.getElementById("address-alert-tab-btn");
 const extractPanel = document.getElementById("extract-panel");
 const duplicatePanel = document.getElementById("duplicate-panel");
 const exclusionPanel = document.getElementById("exclusion-panel");
+const addressAlertPanel = document.getElementById("address-alert-panel");
 const column1Output = document.getElementById("column1-output");
 const column2Output = document.getElementById("column2-output");
 const column3Output = document.getElementById("column3-output");
@@ -57,6 +59,11 @@ const exclusionOutput = document.getElementById("exclusion-output");
 const exclusionStatusEl = document.getElementById("exclusion-status");
 const exclusionTotalCountEl = document.getElementById("exclusion-total-count");
 const exclusionWordCountEl = document.getElementById("exclusion-word-count");
+const addressAlertInput = document.getElementById("address-alert-input");
+const addressAlertOutput = document.getElementById("address-alert-output");
+const addressAlertStatusEl = document.getElementById("address-alert-status");
+const addressAlertTotalCountEl = document.getElementById("address-alert-total-count");
+const addressAlertOutputCountEl = document.getElementById("address-alert-output-count");
 const boundaryDatasetCache = new Map();
 const boundaryDatasetPendingLoads = new Map();
 
@@ -252,6 +259,16 @@ function setExclusionCounts(totalCount, wordCount) {
     if (exclusionWordCountEl) {
         exclusionWordCountEl.textContent = String(wordCount);
     }
+}
+
+function setAddressAlertStatus(message, type = "") {
+    addressAlertStatusEl.textContent = message;
+    addressAlertStatusEl.className = `status ${type}`.trim();
+}
+
+function setAddressAlertCounts(totalCount, outputCount) {
+    addressAlertTotalCountEl.textContent = String(totalCount);
+    addressAlertOutputCountEl.textContent = String(outputCount);
 }
 
 function getStoredValue(key) {
@@ -662,7 +679,8 @@ function getFilterValue() {
 function switchToolTab(tabName) {
     const isDuplicateTab = tabName === "duplicate";
     const isExclusionTab = tabName === "exclusion";
-    const isExtractTab = !isDuplicateTab && !isExclusionTab;
+    const isAddressAlertTab = tabName === "address-alert";
+    const isExtractTab = !isDuplicateTab && !isExclusionTab && !isAddressAlertTab;
 
     if (extractTabButton) {
         extractTabButton.classList.toggle("is-active", isExtractTab);
@@ -676,6 +694,10 @@ function switchToolTab(tabName) {
         exclusionTabButton.classList.toggle("is-active", isExclusionTab);
     }
 
+    if (addressAlertTabButton) {
+        addressAlertTabButton.classList.toggle("is-active", isAddressAlertTab);
+    }
+
     if (extractPanel) {
         extractPanel.classList.toggle("is-active", isExtractTab);
     }
@@ -686,6 +708,10 @@ function switchToolTab(tabName) {
 
     if (exclusionPanel) {
         exclusionPanel.classList.toggle("is-active", isExclusionTab);
+    }
+
+    if (addressAlertPanel) {
+        addressAlertPanel.classList.toggle("is-active", isAddressAlertTab);
     }
 }
 
@@ -922,6 +948,14 @@ function parseDuplicateInputLines(rawText) {
         .filter(Boolean);
 }
 
+function parseAddressInputLines(rawText) {
+    const normalizedText = String(rawText == null ? "" : rawText)
+        .replace(/^\uFEFF/, "")
+        .replace(/\r\n?/g, "\n");
+
+    return normalizedText ? normalizedText.split("\n").map(normalizeValue) : [];
+}
+
 function parseExclusionInputLines(rawText) {
     const normalizedText = String(rawText == null ? "" : rawText)
         .replace(/^\uFEFF/, "")
@@ -932,7 +966,39 @@ function parseExclusionInputLines(rawText) {
         return [];
     }
 
-    return normalizedText.split("\n").map((line) => normalizeValue(line));
+    return parseAddressInputLines(normalizedText);
+}
+
+function getAddressAfterMunicipality(address) {
+    let localAddress = normalizeValue(address)
+        .replace(/^(?:北海道|東京都|京都府|大阪府|.{2,3}県)\s*/, "");
+
+    // 市・町・村の文字が名前の途中にある自治体は、末尾までまとめて判定する。
+    const municipalityPattern = /^(?:(?:四日市|廿日市|野々市|大和郡山|蒲郡|大町|十日町|田村|羽村|大村|東村山|武蔵村山)市|(?:余市|上市|下市|玉村|大町)町|.[^市区町村\s]*?[市区町村])/;
+    if (!/^(?:大和郡山|蒲郡)市/.test(localAddress)) {
+        localAddress = localAddress.replace(/^(?:余市|高市|[^市区]+?)郡\s*/, "");
+    }
+
+    const municipality = localAddress.match(municipalityPattern);
+    if (!municipality) {
+        return "";
+    }
+
+    let remainder = localAddress.slice(municipality[0].length).trim();
+    if (/^(?:札幌|仙台|さいたま|千葉|横浜|川崎|相模原|新潟|静岡|浜松|名古屋|京都|大阪|堺|神戸|岡山|広島|北九州|福岡|熊本)市$/.test(municipality[0])) {
+        const ward = remainder.match(/^[^区\s]+区/);
+        if (!ward) {
+            return "";
+        }
+        remainder = remainder.slice(ward[0].length).trim();
+    }
+
+    return remainder;
+}
+
+function buildAddressAlert(address) {
+    const remainder = getAddressAfterMunicipality(address);
+    return remainder ? `「${remainder}」以降の住所を補充してください` : "";
 }
 
 function buildExclusionWords(addresses) {
@@ -966,10 +1032,6 @@ function buildExclusionWords(addresses) {
         }
 
         const words = [];
-        if (!address.includes("丁目")) {
-            words.push("丁目");
-        }
-
         const suffixes = [];
         for (
             let index = findPrefixStart(address);
@@ -1600,6 +1662,59 @@ function clearExclusionWords() {
     setExclusionStatus("除外ワード作成をクリアしました。", "success");
 }
 
+function resetAddressAlertOutputs() {
+    addressAlertOutput.value = "";
+    setAddressAlertCounts(0, 0);
+    setAddressAlertStatus("");
+}
+
+function createAddressAlerts() {
+    const addresses = parseAddressInputLines(addressAlertInput.value);
+    if (!addresses.some(Boolean)) {
+        resetAddressAlertOutputs();
+        setAddressAlertStatus("詳細住所の列を貼り付けてください。", "error");
+        return;
+    }
+
+    const alerts = addresses.map(buildAddressAlert);
+    addressAlertOutput.value = alerts.join("\n");
+    const outputCount = alerts.filter(Boolean).length;
+    setAddressAlertCounts(addresses.length, outputCount);
+
+    const invalidRows = addresses
+        .map((address, index) => address && !alerts[index] ? index + 1 : null)
+        .filter((row) => row !== null);
+    if (invalidRows.length) {
+        setAddressAlertStatus(
+            `アラート文を${outputCount}行作成しました。${invalidRows.join(", ")}行目は市区町村名またはその後の住所を判別できないため空欄にしました。`,
+            "error"
+        );
+        return;
+    }
+
+    setAddressAlertStatus(`アラート文を${outputCount}行作成しました。`, "success");
+}
+
+function copyAddressAlertResults() {
+    const text = addressAlertOutput.value;
+    if (!text.trim()) {
+        setAddressAlertStatus("コピーするアラート文がありません。", "error");
+        return;
+    }
+
+    navigator.clipboard.writeText(text).then(() => {
+        setAddressAlertStatus("アラート文の列をコピーしました。", "success");
+    }).catch(() => {
+        setAddressAlertStatus("コピーに失敗しました。", "error");
+    });
+}
+
+function clearAddressAlerts() {
+    addressAlertInput.value = "";
+    resetAddressAlertOutputs();
+    setAddressAlertStatus("住所補充アラートをクリアしました。", "success");
+}
+
 function clearAll() {
     csvInput.value = "";
     if (secondaryCsvInput) {
@@ -1635,6 +1750,7 @@ function initializeAddressTool() {
     switchToolTab("extract");
     resetDuplicateOutputs();
     resetExclusionOutputs();
+    resetAddressAlertOutputs();
 
     setupCsvDropZone(csvDropZone, csvInput, "1つ目のCSV");
     setupCsvDropZone(secondaryCsvDropZone, secondaryCsvInput, "2つ目のCSV");
@@ -1658,6 +1774,9 @@ document.getElementById("clear-duplicate-btn").addEventListener("click", clearDu
 document.getElementById("create-exclusion-btn").addEventListener("click", createExclusionWords);
 document.getElementById("copy-exclusion-results-btn").addEventListener("click", copyExclusionResults);
 document.getElementById("clear-exclusion-btn").addEventListener("click", clearExclusionWords);
+document.getElementById("create-address-alert-btn").addEventListener("click", createAddressAlerts);
+document.getElementById("copy-address-alert-results-btn").addEventListener("click", copyAddressAlertResults);
+document.getElementById("clear-address-alert-btn").addEventListener("click", clearAddressAlerts);
 if (extractTabButton) {
     extractTabButton.addEventListener("click", () => switchToolTab("extract"));
 }
@@ -1666,6 +1785,9 @@ if (duplicateTabButton) {
 }
 if (exclusionTabButton) {
     exclusionTabButton.addEventListener("click", () => switchToolTab("exclusion"));
+}
+if (addressAlertTabButton) {
+    addressAlertTabButton.addEventListener("click", () => switchToolTab("address-alert"));
 }
 if (boundaryDatasetSelect) {
     boundaryDatasetSelect.addEventListener("change", () => {
