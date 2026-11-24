@@ -1003,6 +1003,7 @@ function setAddressMatchStatus(state, message, details = "") {
 }
 
 function updateAddressMatchStatus(searchedAddress, result) {
+    const sourceName = window.coordinateSearchProvider ? window.coordinateSearchProvider.label : "Google マップ";
     const googleAddress = stripGoogleAddressPrefix(result && result.formatted_address);
     const normalizedSearchedAddress = normalizeAddressForComparison(searchedAddress);
     const normalizedGoogleAddress = normalizeAddressForComparison(googleAddress);
@@ -1010,7 +1011,7 @@ function updateAddressMatchStatus(searchedAddress, result) {
     if (!normalizedSearchedAddress || !normalizedGoogleAddress) {
         setAddressMatchStatus(
             "unavailable",
-            "⚠️ 住所照合: Google マップの住所を確認できませんでした",
+            `⚠️ 住所照合: ${sourceName}の住所を確認できませんでした`,
             `検索住所: ${searchedAddress || "（空欄）"}\nGoogle住所: ${googleAddress || "（取得できませんでした）"}`
         );
         return false;
@@ -1022,13 +1023,13 @@ function updateAddressMatchStatus(searchedAddress, result) {
     if (isMatch) {
         setAddressMatchStatus(
             "match",
-            "✅ 住所一致: Google マップの住所と一致しています",
+            `✅ 住所一致: ${sourceName}の住所と一致しています`,
             details
         );
     } else {
         setAddressMatchStatus(
             "mismatch",
-            `❌ 住所不一致: Google マップでは「${googleAddress}」です`,
+            `❌ 住所不一致: ${sourceName}では「${googleAddress}」です`,
             details
         );
     }
@@ -1190,6 +1191,9 @@ function updateGeocodeCandidateControls() {
         retryButton.title = retryQuery && !isSameQuery
             ? `「${retryQuery}」で再検索します`
             : "この短縮住所では再検索済みです";
+    }
+    if (window.coordinateSearchProvider && window.coordinateSearchProvider.onCandidateChanged) {
+        window.coordinateSearchProvider.onCandidateChanged(selectedResult);
     }
 }
 
@@ -2164,6 +2168,9 @@ async function applyGeocodeCandidate(candidateIndex, requestToken = geocodeReque
 }
 
 function requestGeocodeCandidates(query, searchedAddress, isRetry = false) {
+    if (window.coordinateSearchProvider) {
+        return window.coordinateSearchProvider.search(query, searchedAddress, isRetry);
+    }
     const normalizedQuery = normalizeAddressNumbers(query);
     const comparisonAddress = String(searchedAddress || normalizedQuery).trim();
     const calcDisplay = document.getElementById("calculated-radius-display");

@@ -8,6 +8,15 @@
   - 設定（自動半径計算・配置切替）の永続化ロジックを実装。
 - `help.html`:
   - APIキー取得手順を案内するヘルプ画面。
+- `places-tool.html` / `places-tool.css` / `places-tool.js`:
+  - メイン画面を複製したPlaces版。通常版の歯車メニューからアクセスできる。
+  - Places API（新版）のテキスト検索と入力候補検索を切り替え可能。入力候補は選択後に詳細と座標を取得する。
+  - 地図・一覧処理・候補順位付け・住所照合・境界照合・半径計算は `script.js` を共有し、検索だけ `window.coordinateSearchProvider` で差し替える。
+  - 住所コンポーネントとviewportを既存処理に合わせて変換する。Placesのviewportは地域境界そのものとは限らない。
+  - 入力候補は300msの待機と日本語変換の終了後に取得し、セッショントークンを選択ごとに更新する。古いリクエストは入力変更・検索方法変更時に無効化する。
+  - APIキーと既存設定は通常版と共有。検索方法のみ専用キー `mapToolPlacesSearchModeV1` に保存する。
+- `tests/places-search.test.cjs`:
+  - `node --test tests/places-search.test.cjs` でPlacesの応答を模擬し、既存処理への引き渡し・入力候補選択・非同期競合・エラーを検証する。
 
 ## 現在の業務仕様との整合
 - 出力文は `{緯度, 経度}で◯◯mピン（消防出動情報向けのメッセージです）` 形式で生成。

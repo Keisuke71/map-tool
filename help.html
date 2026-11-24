@@ -179,6 +179,30 @@
             <li><strong>「利用開始」</strong>ボタンを押してください。</li>
         </ol>
 
+        <h2 id="places-search">Places版の座標取得ツール</h2>
+        <p>通常版の歯車メニューにある<strong>「Places版の座標取得ツールを開く」</strong>から、
+            <a href="places-tool.html">Places版</a>へ移動できます。APIキー、一覧データ、地図の設定は通常版と共有します。</p>
+        <ol>
+            <li>Google Cloudで、通常版のAPIキーを発行したプロジェクトを開きます。</li>
+            <li>「APIとサービス」＞「ライブラリ」で<strong>Places API（新版） / Places API (New)</strong>を検索して有効にします。
+                「Places API」という旧版とは異なります。</li>
+            <li>APIキーの「APIの制限」でAPIを限定している場合は、既存のAPIに加えて<strong>Places API（新版）</strong>を許可します。
+                ウェブサイト制限がある場合は、Places版を開くURLも許可対象にしてください。</li>
+            <li>請求先の設定と、Places API（新版）の割り当て・利用料金を確認してからPlaces版を開きます。</li>
+        </ol>
+        <p><strong>テキスト検索：</strong>住所を入力して「テキスト検索」を押します。複数の結果は「前候補」「次候補」で確認できます。</p>
+        <p><strong>入力候補検索：</strong>検索方法を切り替えて住所を入力します。表示された候補をクリックするか、上下キーとEnterで選択します。
+            Escapeで候補を閉じます。一覧処理では、各行の住所が入力された後に候補を選択してください。</p>
+        <p>どちらの方法でも、元の入力住所とPlacesの返却住所を照合し、ピン配置・自動半径計算・参照マップ・出力文生成に引き継ぎます。
+            住所不一致の場合は、選択された住所と位置を確認してください。通常のGoogleマップと同じ検索結果になるとは限りません。</p>
+        <div class="note">
+            Placesのテキスト検索、入力候補、選択後の詳細取得には、それぞれの料金体系が適用されます。
+            Places版の呼出回数はこのページを開いてからの目安で、請求額や無料枠の残数ではありません。
+            通常版のGeocoding APIの上限設定ではPlacesの利用量を制限できません。
+            詳細は<a href="https://developers.google.com/maps/billing-and-pricing/pricing?hl=ja" target="_blank" rel="noreferrer">Google公式の料金表</a>と
+            <a href="https://developers.google.com/maps/documentation/places/web-service/usage-and-billing?hl=ja" target="_blank" rel="noreferrer">Places APIの使用量と請求</a>をご確認ください。
+        </div>
+
         <div class="back-link">
             <a href="javascript:window.close();" class="btn">この画面を閉じる</a>
         </div>
