@@ -1040,9 +1040,17 @@ function buildExclusionWords(addresses) {
         ) {
             const candidate = sortedAddresses[index];
             if (candidate.length > address.length) {
+                const suffix = normalizeValue(candidate.slice(address.length));
+                const chomeMatch = suffix.match(/[0-9０-９〇零一二三四五六七八九十百千万]+丁目/);
+                const value = chomeMatch
+                    ? (chomeMatch.index > 0
+                        ? normalizeValue(suffix.slice(0, chomeMatch.index))
+                        : suffix.slice(chomeMatch[0].length - "丁目".length))
+                    : suffix;
+
                 suffixes.push({
                     order: uniqueAddressOrder.get(candidate),
-                    value: normalizeValue(candidate.slice(address.length))
+                    value
                 });
             }
         }
