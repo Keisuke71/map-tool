@@ -81,6 +81,7 @@ function fixture({ mode = 'text', places = true, ready = true } = {}) {
     document.getElementById = get;
     document.querySelectorAll = () => radios;
     document.createElement = () => new Element();
+    document.createTextNode = text => Object.assign(new Element('#text'), { textContent: String(text) });
     // Model the real panel's relationship to its list for outside-click tests.
     get('places-autocomplete-panel').appendChild(get('places-predictions'));
     const context = vm.createContext({
@@ -345,4 +346,82 @@ test('the original page still uses Geocoding with its existing query and labels'
     assert.equal(f.calls.text.length, 0);
     assert.match(f.get('address-match-status-display').textContent, /住所一致: Google マップ/);
     assert.equal(f.calls.pins.length, 1);
+});
+
+test('the original page Places検索 shows confirmation modal before searching and remembers opt-out', async () => {
+    const f = fixture({ places: false });
+    f.get('places-confirm-modal').hidden = true;
+    f.library.Place.searchByText = async request => {
+        f.calls.text.push(request);
+        return { places: [place('徳島県徳島市方上町', 'broader'), place()] };
+    };
+    f.get('address-input').value = address;
+
+    // First click opens the confirmation modal without calling Places API.
+    f.get('places-search-btn').dispatch('click');
+    await settle();
+    assert.equal(f.get('places-confirm-modal').hidden, false);
+    assert.equal(f.calls.text.length, 0);
+
+    // Cancel closes the modal without searching.
+    f.get('places-confirm-cancel-btn').dispatch('click');
+    assert.equal(f.get('places-confirm-modal').hidden, true);
+    assert.equal(f.calls.text.length, 0);
+
+    // Proceed with skip checkbox executes Places search and skips future modals.
+    f.get('places-search-btn').dispatch('click');
+    f.get('places-confirm-skip-checkbox').checked = true;
+    f.get('places-confirm-proceed-btn').dispatch('click');
+    await settle();
+    assert.equal(f.get('places-confirm-modal').hidden, true);
+    assert.equal(f.calls.text.length, 1);
+    assert.equal(f.calls.text[0].textQuery, address);
+    assert.equal(f.calls.geocodes.length, 0);
+    assert.equal(f.run('currentGeocodeCandidates[0].result.place_id'), 'exact');
+    assert.deepEqual(f.calls.radii, [100]);
+    assert.deepEqual(f.calls.ref, ['place_id:exact']);
+    assert.match(f.get('address-match-status-display').textContent, /住所一致: Places/);
+    assert.equal(f.get('places-data-attributions').children[0].href, 'https://example.com/');
+
+    // Shortened retry uses Places without reopening the modal.
+    f.get('retry-geocode-without-municipality-btn').dispatch('click');
+    await settle();
+    assert.equal(f.calls.text.length, 2);
+    assert.equal(f.calls.text[1].textQuery, '方上町下中山');
+    assert.equal(f.run('currentGeocodeAddress'), address);
+
+    // Next click on Places検索 runs immediately because opt-out was saved.
+    f.get('places-search-btn').dispatch('click');
+    await settle();
+    assert.equal(f.get('places-confirm-modal').hidden, true);
+    assert.equal(f.calls.text.length, 3);
+    const usageText = f.get('places-usage-display').children.map(node => node.textContent).join('');
+    assert.equal(usageText, 'Places呼出回数: テキスト 3 / 入力候補 0 / 詳細 0');
+});
+
+test('the original page Places検索 handles disabled API errors with help link and clears them on normal Geocoding search', async () => {
+    const f = fixture({ places: false });
+    f.run('localStorage.setItem("mapToolPlacesSearchConfirmedV1", "true")');
+    f.library.Place.searchByText = async () => { throw new Error('REQUEST_DENIED'); };
+    f.get('address-input').value = address;
+    f.get('places-search-btn').dispatch('click');
+    await settle();
+    assert.equal(f.get('places-search-error').hidden, false);
+    const errorNodes = f.get('places-search-error').children;
+    assert.match(errorNodes[0].textContent, /Places API（新版）が有効になっていない/);
+    assert.equal(errorNodes[1].href, 'help.html#places-search');
+
+    f.context.mockResult = {
+        formatted_address: address, types: [],
+        geometry: { location: place().location, viewport: place().viewport }
+    };
+    f.run(`geocoder = { geocode(request, callback) {
+        calls.geocodes.push(request);
+        callback([mockResult], 'OK');
+    }}; QuotaManager.increment = () => {}`);
+    f.get('search-btn').dispatch('click');
+    await settle();
+    assert.equal(f.get('places-search-error').hidden, true);
+    assert.equal(f.get('places-data-attributions').hidden, true);
+    assert.match(f.get('address-match-status-display').textContent, /住所一致: Google マップ/);
 });
