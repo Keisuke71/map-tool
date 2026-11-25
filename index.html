@@ -592,6 +592,155 @@
             background: var(--accent-strong);
         }
 
+        #places-search-btn {
+            color: #fff;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+            background: linear-gradient(135deg,
+                    #e86f7c 0%,
+                    #f2a65a 22%,
+                    #d9c452 44%,
+                    #4eb88a 66%,
+                    #4a90d9 84%,
+                    #9b72cf 100%);
+            box-shadow: 0 10px 20px rgba(19, 34, 52, 0.1), inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+            transition: filter 0.15s ease, transform 0.15s ease;
+        }
+
+        #places-search-btn:hover {
+            background: linear-gradient(135deg,
+                    #e86f7c 0%,
+                    #f2a65a 22%,
+                    #d9c452 44%,
+                    #4eb88a 66%,
+                    #4a90d9 84%,
+                    #9b72cf 100%);
+            filter: brightness(0.95);
+        }
+
+        #places-search-btn:active {
+            transform: translateY(1px);
+        }
+
+        .places-search-error {
+            padding: 10px 12px;
+            border: 1px solid #c0392b;
+            border-radius: 10px;
+            background: #fff3f1;
+            color: #8c281f;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .places-search-error a {
+            color: #8c281f;
+            font-weight: 700;
+        }
+
+        .places-data-attributions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        .places-data-attributions a {
+            color: var(--accent-strong);
+        }
+
+        .places-search-error[hidden],
+        .places-data-attributions[hidden] {
+            display: none;
+        }
+
+        #places-confirm-modal {
+            position: fixed;
+            inset: 0;
+            padding: 20px;
+            background: rgba(8, 17, 29, 0.74);
+            backdrop-filter: blur(12px);
+            z-index: 9998;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #places-confirm-modal[hidden] {
+            display: none;
+        }
+
+        .places-confirm-content {
+            width: min(500px, 100%);
+        }
+
+        .places-confirm-content h2 {
+            font-size: 20px;
+            margin: 0 0 12px;
+        }
+
+        .places-confirm-list {
+            margin: 0 0 14px;
+            padding-left: 20px;
+            color: #334155;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .places-confirm-list li {
+            margin-bottom: 6px;
+        }
+
+        .places-confirm-links {
+            margin: 0 0 14px;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .places-confirm-links a {
+            color: var(--accent-strong);
+            font-weight: 700;
+        }
+
+        .places-confirm-skip {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0 0 18px;
+            font-size: 13px;
+            color: var(--ink);
+            cursor: pointer;
+        }
+
+        .places-confirm-skip input {
+            width: 16px;
+            height: 16px;
+            accent-color: var(--accent);
+        }
+
+        .places-confirm-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        #places-confirm-cancel-btn {
+            background: rgba(19, 34, 52, 0.1);
+            color: var(--ink);
+            box-shadow: none;
+        }
+
+        #places-confirm-cancel-btn:hover {
+            background: rgba(19, 34, 52, 0.16);
+        }
+
+        #places-confirm-proceed-btn {
+            background: var(--accent);
+            color: #fff;
+        }
+
+        #places-confirm-proceed-btn:hover {
+            background: var(--accent-strong);
+        }
+
         #header-copy-btn {
             background: var(--warm) !important;
             margin-left: 0 !important;
@@ -999,11 +1148,33 @@
         }
 
         #calculated-radius-display,
-        #quota-display {
+        #quota-display,
+        #places-usage-display {
             padding: 7px 10px;
             border-radius: 999px;
             background: rgba(19, 34, 52, 0.06);
             font-size: 11px;
+        }
+
+        #places-usage-display {
+            border-radius: 14px;
+            line-height: 1.45;
+            max-width: 220px;
+            white-space: normal;
+        }
+
+        #places-usage-display .places-usage-chunk {
+            display: inline-block;
+            white-space: nowrap;
+        }
+
+        .quota-stack {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 4px;
+            flex: 0 1 auto;
+            max-width: 100%;
         }
 
         .address-match-status {
@@ -1154,6 +1325,7 @@
             #docs-btn,
             #settings-btn,
             #search-btn,
+            #places-search-btn,
             #header-copy-btn,
             #copy-btn {
                 width: 100%;
@@ -1440,6 +1612,28 @@
         </div>
     </div>
 
+    <div id="places-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="places-confirm-title" hidden>
+        <div class="modal-content places-confirm-content">
+            <h2 id="places-confirm-title">Places検索の利用確認</h2>
+            <ul class="places-confirm-list">
+                <li><strong>Places API（新版） / Places API (New)</strong> のテキスト検索を使用します。通常の「検索」（Geocoding API）とは<strong>別の料金体系</strong>が適用されます。</li>
+                <li>Geocoding API の上限設定では Places API の利用量を制限できません。Google Cloud 側で割り当てと利用料金をご確認ください。</li>
+                <li>事前に Google Cloud で <strong>Places API（新版）</strong> を有効にし、APIキーの制限がある場合は許可対象へ追加してください（旧版「Places API」とは異なります）。</li>
+            </ul>
+            <p class="places-confirm-links">
+                詳細は <a href="help.html#places-search" target="_blank" rel="noreferrer">設定方法・利用料金について</a> をご確認ください。
+            </p>
+            <label class="places-confirm-skip">
+                <input type="checkbox" id="places-confirm-skip-checkbox">
+                次回からこの確認を表示しない
+            </label>
+            <div class="places-confirm-actions">
+                <button id="places-confirm-cancel-btn" type="button">キャンセル</button>
+                <button id="places-confirm-proceed-btn" type="button">Places検索を実行</button>
+            </div>
+        </div>
+    </div>
+
     <div class="app-layout">
         <aside id="list-sidebar">
             <div id="list-mode-toggle-row">
@@ -1492,6 +1686,7 @@
                         <span class="search-icon">⌖</span>
                         <input type="text" id="address-input" placeholder="住所を入力">
                         <button id="search-btn">検索</button>
+                        <button id="places-search-btn" type="button" title="Places API（新版）のテキスト検索で住所を検索">Places検索</button>
 
                         <button id="header-copy-btn" onclick="copyToClipboard(this)" title="現在の結果をコピー">コピー</button>
                     </div>
@@ -1562,8 +1757,14 @@
                         </div>
                     </div>
 
-                    <div id="quota-display" style="text-align:right;"></div>
+                    <div class="quota-stack">
+                        <div id="quota-display" style="text-align:right;"></div>
+                        <div id="places-usage-display" style="text-align:right;"
+                            title="このページでのAPI呼び出し回数です。課金額や無料枠の残数ではありません。"></div>
+                    </div>
                 </div>
+                <div id="places-search-error" class="places-search-error" role="alert" hidden></div>
+                <div id="places-data-attributions" class="places-data-attributions" hidden></div>
             </div>
 
             <div id="main-container" class="layout-horizontal">
@@ -1594,6 +1795,16 @@
     <script>
         // ボタンイベントの紐付け（HTML内にJSを書く場合）
         document.getElementById('search-btn').addEventListener('click', geocodeAddress);
+        document.getElementById('places-search-btn').addEventListener('click', searchAddressWithPlaces);
+        document.getElementById('places-confirm-cancel-btn').addEventListener('click', closePlacesConfirmModal);
+        document.getElementById('places-confirm-proceed-btn').addEventListener('click', confirmAndRunPlacesSearch);
+        document.getElementById('places-confirm-modal').addEventListener('click', (e) => {
+            if (e.target === e.currentTarget) closePlacesConfirmModal();
+        });
+        document.addEventListener('keydown', (e) => {
+            const modal = document.getElementById('places-confirm-modal');
+            if (e.key === 'Escape' && modal && !modal.hidden) closePlacesConfirmModal();
+        });
         document.getElementById('address-input').addEventListener('keydown', (e) => {
             if (e.key === 'Enter') geocodeAddress();
         });

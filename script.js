@@ -14,6 +14,7 @@ const STORAGE_KEY_TOWN_BOUNDARY_VISIBLE = "townBoundaryVisibleV1";
 const STORAGE_KEY_SEARCH_AREA_RECT_VISIBLE = "searchAreaRectVisibleV1";
 const STORAGE_KEY_REF_MAP_SYNC = "referenceMapSyncEnabledV1";
 const STORAGE_KEY_REFERENCE_ONLY_MODE = "referenceOnlyModeV1";
+const STORAGE_KEY_PLACES_SEARCH_CONFIRMED = "mapToolPlacesSearchConfirmedV1";
 
 
 let apiKey = localStorage.getItem(STORAGE_KEY_API);
@@ -48,7 +49,12 @@ let currentGeocodeAddress = "";
 let currentGeocodeQuery = "";
 let currentGeocodeCandidates = [];
 let currentGeocodeCandidateIndex = -1;
+let currentGeocodeSource = "google";
 let pendingGeocodeAddress = "";
+let pendingGeocodeUsePlaces = false;
+let pendingPlacesConfirmAddress = "";
+let placesLibraryPromise = null;
+const PLACES_TEXT_SEARCH_FIELDS = ["id", "formattedAddress", "location", "viewport", "addressComponents", "types", "attributions"];
 let lastRefMapQuery = "";
 let lastRefMapEmbedUrl = "";
 let refMapRefreshTimer = null;
@@ -130,6 +136,37 @@ const QuotaManager = {
     }
 };
 
+const placesPageUsage = { text: 0, autocomplete: 0, details: 0 };
+
+function updateInlinePlacesUsageDisplay() {
+    if (window.coordinateSearchProvider) return;
+    const el = document.getElementById("places-usage-display");
+    if (!el) return;
+
+    const parts = [
+        "Places呼出回数: ",
+        `テキスト ${placesPageUsage.text}`,
+        " / ",
+        `入力候補 ${placesPageUsage.autocomplete}`,
+        " / ",
+        `詳細 ${placesPageUsage.details}`
+    ];
+    el.replaceChildren();
+    parts.forEach((part, index) => {
+        if (index % 2 === 1 || index === 0) {
+            const span = document.createElement("span");
+            span.className = "places-usage-chunk";
+            span.textContent = part.trimEnd();
+            el.appendChild(span);
+            if (part.endsWith(" ")) {
+                el.appendChild(document.createTextNode(" "));
+            }
+        } else {
+            el.appendChild(document.createTextNode(part));
+        }
+    });
+}
+
 function appendCalculationLog(message, tone = "info") {
     calculationLogs.unshift({
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -194,6 +231,7 @@ document.addEventListener("DOMContentLoaded", () => {
     applySavedSidebarWidth();
     renderCalculationLogs();
     QuotaManager.updateDisplay();
+    updateInlinePlacesUsageDisplay();
     updateAutoRadiusDisplay();
     updateOverlayVisibilityDisplay();
     updateReferenceMapSyncDisplay();
@@ -861,8 +899,15 @@ window.initMap = function () {
     updateRefMap("東京都千代田区富士見2丁目");
 
     if (pendingGeocodeAddress) {
+        const queuedAddress = pendingGeocodeAddress;
+        const usePlaces = pendingGeocodeUsePlaces;
         pendingGeocodeAddress = "";
-        geocodeAddress();
+        pendingGeocodeUsePlaces = false;
+        if (usePlaces) {
+            requestPlacesTextCandidates(queuedAddress, queuedAddress, false);
+        } else {
+            geocodeAddress();
+        }
     }
 
     refreshTownBoundaryVisibilityState();
@@ -1003,7 +1048,9 @@ function setAddressMatchStatus(state, message, details = "") {
 }
 
 function updateAddressMatchStatus(searchedAddress, result) {
-    const sourceName = window.coordinateSearchProvider ? window.coordinateSearchProvider.label : "Google マップ";
+    const sourceName = window.coordinateSearchProvider
+        ? window.coordinateSearchProvider.label
+        : (currentGeocodeSource === "places" ? "Places" : "Google マップ");
     const googleAddress = stripGoogleAddressPrefix(result && result.formatted_address);
     const normalizedSearchedAddress = normalizeAddressForComparison(searchedAddress);
     const normalizedGoogleAddress = normalizeAddressForComparison(googleAddress);
@@ -1194,6 +1241,8 @@ function updateGeocodeCandidateControls() {
     }
     if (window.coordinateSearchProvider && window.coordinateSearchProvider.onCandidateChanged) {
         window.coordinateSearchProvider.onCandidateChanged(selectedResult);
+    } else {
+        renderInlinePlacesAttributions(selectedResult);
     }
 }
 
@@ -1230,6 +1279,11 @@ function retryGeocodeWithoutMunicipalityPrefix() {
 
     if (normalizeAddressForComparison(retryQuery) === normalizeAddressForComparison(currentGeocodeQuery)) {
         appendCalculationLog(`短縮住所「${retryQuery}」では再検索済みです。`, "muted");
+        return;
+    }
+
+    if (!window.coordinateSearchProvider && currentGeocodeSource === "places") {
+        requestPlacesTextCandidates(retryQuery, originalAddress, true);
         return;
     }
 
@@ -2167,6 +2221,198 @@ async function applyGeocodeCandidate(candidateIndex, requestToken = geocodeReque
     updateTownBoundaryOverlay(result, townBoundaryMatches);
 }
 
+function getPlacesLibrary() {
+    if (!placesLibraryPromise) {
+        placesLibraryPromise = google.maps.importLibrary("places").catch((error) => {
+            placesLibraryPromise = null;
+            throw error;
+        });
+    }
+    return placesLibraryPromise;
+}
+
+function convertPlaceToGeocodeResult(place) {
+    if (!place || !place.location) return null;
+    return {
+        place_id: place.id,
+        formatted_address: place.formattedAddress || "",
+        types: place.types || [],
+        address_components: (place.addressComponents || []).map((component) => ({
+            long_name: component.longText || "",
+            short_name: component.shortText || "",
+            types: component.types || []
+        })),
+        geometry: { location: place.location, viewport: place.viewport },
+        places_attributions: place.attributions || []
+    };
+}
+
+function renderInlinePlacesAttributions(result) {
+    const container = document.getElementById("places-data-attributions");
+    if (!container) return;
+    container.replaceChildren();
+    for (const attribution of (result && result.places_attributions) || []) {
+        const link = document.createElement("a");
+        if (/^https?:\/\//i.test(attribution.providerURI || "")) {
+            link.href = attribution.providerURI;
+            link.target = "_blank";
+            link.rel = "noreferrer";
+        }
+        link.textContent = attribution.provider || attribution.providerURI || "";
+        if (link.textContent) container.appendChild(link);
+    }
+    container.hidden = !container.childElementCount;
+}
+
+function hideInlinePlacesSearchError() {
+    const errorDisplay = document.getElementById("places-search-error");
+    if (errorDisplay) errorDisplay.hidden = true;
+}
+
+function showInlinePlacesSearchError(error, requestToken) {
+    if (requestToken !== geocodeRequestToken) return;
+    console.error("Places search failed.", error);
+    resetGeocodeCandidates();
+    const errorDisplay = document.getElementById("places-search-error");
+    if (errorDisplay) {
+        errorDisplay.replaceChildren();
+        const errorText = String((error && (error.message || error.code || error)) || "");
+        const isNotEnabledOrDenied = /REQUEST_DENIED|PERMISSION_DENIED|ApiNotActivated|not been used|disabled|403/i.test(errorText);
+        const message = isNotEnabledOrDenied
+            ? "Places API（新版）が有効になっていないか、APIキーで許可されていません。Google Cloudで「Places API（新版） / Places API (New)」の有効化、APIキーのAPI制限・ウェブサイト制限、請求先・割り当てを確認してください。"
+            : "Places検索に失敗しました。Google Cloudで「Places API（新版） / Places API (New)」の有効化、APIキーのAPI制限・ウェブサイト制限、請求先・割り当て、通信状況を確認してください。";
+        const textNode = document.createTextNode(`${message} `);
+        const helpLink = document.createElement("a");
+        helpLink.href = "help.html#places-search";
+        helpLink.target = "_blank";
+        helpLink.rel = "noreferrer";
+        helpLink.textContent = "設定方法・利用料金を確認する";
+        errorDisplay.appendChild(textNode);
+        errorDisplay.appendChild(helpLink);
+        errorDisplay.hidden = false;
+    }
+    setAddressMatchStatus("unavailable", "⚠️ 住所照合: Places検索に失敗しました");
+    appendCalculationLog("Places検索失敗: Places API（新版）の有効化・APIキー制限・請求先設定や通信状況を確認してください。", "warning");
+}
+
+async function requestPlacesTextCandidates(query, searchedAddress, isRetry = false) {
+    const normalizedQuery = normalizeAddressNumbers(query);
+    const comparisonAddress = String(searchedAddress || normalizedQuery).trim();
+    const calcDisplay = document.getElementById("calculated-radius-display");
+
+    if (!normalizedQuery || !comparisonAddress) return;
+
+    if (!geocoder) {
+        pendingGeocodeAddress = comparisonAddress;
+        pendingGeocodeUsePlaces = true;
+        setAddressMatchStatus("checking", "🔎 地図の読み込み後にPlacesで検索します…");
+        return;
+    }
+
+    pendingGeocodeAddress = "";
+    pendingGeocodeUsePlaces = false;
+    const requestToken = ++geocodeRequestToken;
+    currentGeocodeSource = "places";
+    resetGeocodeCandidates();
+    currentGeocodeAddress = comparisonAddress;
+    currentGeocodeQuery = normalizedQuery;
+    hideInlinePlacesSearchError();
+
+    if (calcDisplay) calcDisplay.textContent = "";
+    setAddressMatchStatus("checking", "🔎 住所照合: Placesのテキスト検索中…");
+    appendCalculationLog(`Placesのテキスト検索: ${normalizedQuery}`);
+    if (isRetry) {
+        appendCalculationLog(`市区町村を除いて再検索（元住所: ${comparisonAddress}）`, "muted");
+    }
+
+    try {
+        const { Place } = await getPlacesLibrary();
+        if (requestToken !== geocodeRequestToken) return;
+        placesPageUsage.text += 1;
+        updateInlinePlacesUsageDisplay();
+        const { places } = await Place.searchByText({
+            textQuery: normalizedQuery,
+            fields: PLACES_TEXT_SEARCH_FIELDS,
+            language: "ja",
+            region: "jp",
+            maxResultCount: 10
+        });
+        if (requestToken !== geocodeRequestToken) return;
+
+        currentGeocodeSource = "places";
+        currentGeocodeAddress = comparisonAddress;
+        currentGeocodeQuery = normalizedQuery;
+        currentGeocodeCandidates = rankGeocodeCandidates(
+            comparisonAddress,
+            (places || []).map(convertPlaceToGeocodeResult).filter(Boolean)
+        );
+        currentGeocodeCandidateIndex = currentGeocodeCandidates.length ? 0 : -1;
+        updateGeocodeCandidateControls();
+
+        appendCalculationLog(`Placesの住所候補: ${currentGeocodeCandidates.length}件（一致度順）`, "muted");
+        currentGeocodeCandidates.forEach((entry, index) => {
+            appendCalculationLog(`候補 ${index + 1}: ${stripGoogleAddressPrefix(entry.result.formatted_address)}`, "muted");
+        });
+
+        if (!currentGeocodeCandidates.length) {
+            setAddressMatchStatus("unavailable", "⚠️ 住所照合: Placesで座標を持つ住所候補が見つかりませんでした");
+            return;
+        }
+
+        await applyGeocodeCandidate(0, requestToken);
+    } catch (error) {
+        showInlinePlacesSearchError(error, requestToken);
+    }
+}
+
+function isPlacesSearchConfirmed() {
+    return localStorage.getItem(STORAGE_KEY_PLACES_SEARCH_CONFIRMED) === "true";
+}
+
+function openPlacesConfirmModal(address) {
+    const modal = document.getElementById("places-confirm-modal");
+    if (!modal) {
+        return requestPlacesTextCandidates(address, address, false);
+    }
+    pendingPlacesConfirmAddress = address;
+    const skipCheckbox = document.getElementById("places-confirm-skip-checkbox");
+    if (skipCheckbox) skipCheckbox.checked = false;
+    modal.hidden = false;
+}
+
+function closePlacesConfirmModal() {
+    pendingPlacesConfirmAddress = "";
+    const modal = document.getElementById("places-confirm-modal");
+    if (modal) modal.hidden = true;
+}
+
+function confirmAndRunPlacesSearch() {
+    const skipCheckbox = document.getElementById("places-confirm-skip-checkbox");
+    if (skipCheckbox && skipCheckbox.checked) {
+        localStorage.setItem(STORAGE_KEY_PLACES_SEARCH_CONFIRMED, "true");
+    }
+    const addressInput = document.getElementById("address-input");
+    const address = pendingPlacesConfirmAddress || (addressInput ? addressInput.value.trim() : "");
+    closePlacesConfirmModal();
+    if (!address) return;
+    return requestPlacesTextCandidates(address, address, false);
+}
+
+function searchAddressWithPlaces() {
+    const addressInput = document.getElementById("address-input");
+    const address = addressInput ? addressInput.value.trim() : "";
+
+    if (!address) return;
+    if (window.coordinateSearchProvider) {
+        return window.coordinateSearchProvider.search(address, address, false);
+    }
+    if (!isPlacesSearchConfirmed()) {
+        openPlacesConfirmModal(address);
+        return;
+    }
+    return requestPlacesTextCandidates(address, address, false);
+}
+
 function requestGeocodeCandidates(query, searchedAddress, isRetry = false) {
     if (window.coordinateSearchProvider) {
         return window.coordinateSearchProvider.search(query, searchedAddress, isRetry);
@@ -2177,6 +2423,8 @@ function requestGeocodeCandidates(query, searchedAddress, isRetry = false) {
 
     if (!normalizedQuery || !comparisonAddress) return;
 
+    currentGeocodeSource = "google";
+    hideInlinePlacesSearchError();
     resetGeocodeCandidates();
     currentGeocodeAddress = comparisonAddress;
     currentGeocodeQuery = normalizedQuery;
@@ -2189,10 +2437,12 @@ function requestGeocodeCandidates(query, searchedAddress, isRetry = false) {
 
     if (!geocoder) {
         pendingGeocodeAddress = comparisonAddress;
+        pendingGeocodeUsePlaces = false;
         return;
     }
 
     pendingGeocodeAddress = "";
+    pendingGeocodeUsePlaces = false;
 
     if (calcDisplay) calcDisplay.innerText = "";
     appendCalculationLog(
